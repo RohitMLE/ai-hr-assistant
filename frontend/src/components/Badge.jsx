@@ -7,6 +7,10 @@ const styles = {
   employee: 'bg-sky-50 text-sky-700 ring-sky-200',
   manager: 'bg-violet-50 text-violet-700 ring-violet-200',
   hr_admin: 'bg-slate-100 text-slate-700 ring-slate-200',
+  running: 'bg-blue-50 text-blue-700 ring-blue-200 animate-pulse',
+  success: 'bg-emerald-50 text-emerald-700 ring-emerald-200',
+  interrupted: 'bg-rose-50 text-rose-700 ring-rose-200',
+  planned: 'bg-purple-50 text-purple-700 ring-purple-200',
 };
 
 export default function Badge({ value }) {

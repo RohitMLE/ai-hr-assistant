@@ -7,7 +7,7 @@ const links = [
   { label: 'Leave', path: '/leave', roles: ['employee'] },
   { label: 'Attendance', path: '/attendance', roles: ['employee'] },
   { label: 'My Requests', path: '/my-requests', roles: ['employee'] },
-  { label: 'AI Assistant', path: '/ai-assistant', roles: ['employee', 'manager', 'hr_admin'] },
+  { label: 'Agent Command Center', path: '/agent-command-center', roles: ['employee', 'manager', 'hr_admin'] },
   { label: 'Manager Approvals', path: '/manager/approvals', roles: ['manager'] },
   { label: 'Audit Logs', path: '/audit/logs', roles: ['hr_admin'] },
 ];

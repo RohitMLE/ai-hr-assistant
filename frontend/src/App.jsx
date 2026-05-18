@@ -1,7 +1,7 @@
 import { Navigate, Route, Routes } from 'react-router-dom';
 import AppLayout from './components/AppLayout';
 import ProtectedRoute from './components/ProtectedRoute';
-import AiAssistantPage from './pages/AiAssistantPage';
+import AgentCommandCenterPage from './pages/AgentCommandCenterPage';
 import AuditLogsPage from './pages/AuditLogsPage';
 import AttendancePage from './pages/AttendancePage';
 import DashboardPage from './pages/DashboardPage';
@@ -24,13 +24,14 @@ export default function App() {
       >
         <Route path="/dashboard" element={<DashboardPage />} />
         <Route
-          path="/ai-assistant"
+          path="/agent-command-center"
           element={
             <ProtectedRoute roles={['employee', 'manager', 'hr_admin']}>
-              <AiAssistantPage />
+              <AgentCommandCenterPage />
             </ProtectedRoute>
           }
         />
+        <Route path="/ai-assistant" element={<Navigate to="/agent-command-center" replace />} />
         <Route
           path="/leave"
           element={
