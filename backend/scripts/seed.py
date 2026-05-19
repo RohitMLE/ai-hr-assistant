@@ -13,6 +13,7 @@ from app.db.init_db import init_db
 from app.db.session import SessionLocal
 from app.models.audit_log import AuditLog
 from app.models.attendance_record import AttendanceRecord
+from app.models.attendance_regularization_request import AttendanceRegularizationRequest
 from app.models.leave_balance import LeaveBalance
 from app.models.leave_request import LeaveRequest
 from app.models.pending_action import PendingAction
@@ -25,6 +26,7 @@ def seed() -> None:
     try:
         db.execute(delete(AuditLog))
         db.execute(delete(AttendanceRecord))
+        db.execute(delete(AttendanceRegularizationRequest))
         db.execute(delete(PendingAction))
         db.execute(delete(LeaveRequest))
         db.execute(delete(LeaveBalance))
@@ -83,7 +85,14 @@ def seed() -> None:
             AttendanceRecord(user_id=employee.id, work_date=date(2026, 5, 11), status="present"),
             AttendanceRecord(user_id=employee.id, work_date=date(2026, 5, 12), status="present", is_late=True),
             AttendanceRecord(user_id=employee.id, work_date=date(2026, 5, 13), status="present"),
-            AttendanceRecord(user_id=employee.id, work_date=date(2026, 5, 14), status="holiday"),
+            AttendanceRecord(
+                user_id=employee.id,
+                work_date=date(2026, 5, 14),
+                status="absent",
+                check_in=None,
+                check_out=None,
+                regularization_required=True,
+            ),
             AttendanceRecord(user_id=employee.id, work_date=date(2026, 5, 15), status="present"),
             AttendanceRecord(user_id=employee.id, work_date=date(2026, 5, 18), status="present"),
         ]

@@ -12,11 +12,13 @@ const suggestionsByRole = {
     { label: 'View May Attendance', goal: 'Show my attendance for May 2026' },
     { label: 'Apply Casual Leave', goal: 'Apply casual leave for 24 May' },
     { label: 'My Leave Requests', goal: 'Show my leave requests' },
+    { label: 'Missed Check-in', goal: 'I missed my check-in on 14 May. I worked from office but forgot to punch in.' },
   ],
   manager: [
     { label: 'Pending Approvals', goal: 'Show pending leave approvals' },
+    { label: 'Pending Regularization', goal: 'Show pending attendance regularization requests' },
+    { label: 'Approve Regularization', goal: "Approve Vineet's attendance regularization" },
     { label: 'Approve Recent Request', goal: "Approve Vineet's leave" },
-    { label: 'Reject with Reason', goal: 'Reject Vineet’s leave because project deadline' },
   ],
   hr_admin: [
     { label: 'Check My Leaves', goal: 'How many leaves do I have?' },
@@ -66,12 +68,22 @@ export default function AgentCommandCenterPage() {
     try {
       const response = await sendAgentMessage(message);
       
+      let extractedPlan = response.requires_confirmation 
+        ? 'Action requires human approval before proceeding.' 
+        : 'Task completed successfully.';
+      
+      // Try to extract Plan from reply if present
+      if (response.reply && response.reply.includes('Plan:')) {
+        const planMatch = response.reply.match(/Plan:\n([\s\S]+?)(?=\n\n|\n[A-Z][a-z]+ approval:|$)/);
+        if (planMatch) {
+          extractedPlan = planMatch[1].trim();
+        }
+      }
+
       const updatedRun = {
         ...newRun,
         status: response.requires_confirmation ? 'interrupted' : 'success',
-        plan: response.requires_confirmation 
-          ? 'Action requires human approval before proceeding.' 
-          : 'Task completed successfully.',
+        plan: extractedPlan,
         outcome: response.reply,
         requiresConfirmation: response.requires_confirmation,
         pendingActionId: response.pending_action_id,

@@ -9,6 +9,7 @@ import LeavePage from './pages/LeavePage';
 import LoginPage from './pages/LoginPage';
 import ManagerApprovalsPage from './pages/ManagerApprovalsPage';
 import MyRequestsPage from './pages/MyRequestsPage';
+import RegularizationRequestsPage from './pages/RegularizationRequestsPage';
 import UnauthorizedPage from './pages/UnauthorizedPage';
 
 export default function App() {
@@ -53,6 +54,14 @@ export default function App() {
           element={
             <ProtectedRoute roles={['employee']}>
               <MyRequestsPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/regularization-requests"
+          element={
+            <ProtectedRoute roles={['employee', 'manager']}>
+              <RegularizationRequestsPage />
             </ProtectedRoute>
           }
         />

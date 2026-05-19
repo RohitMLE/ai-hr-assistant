@@ -14,6 +14,16 @@ export const approveLeave = (leaveId, comment = 'Approved') =>
   api.post(`/manager/leave/${leaveId}/approve`, { comment }).then((res) => res.data);
 export const rejectLeave = (leaveId, comment = 'Rejected') =>
   api.post(`/manager/leave/${leaveId}/reject`, { comment }).then((res) => res.data);
+export const getMyRegularizationRequests = () =>
+  api.get('/attendance/regularization/my-requests').then((res) => res.data);
+export const applyRegularization = (payload) =>
+  api.post('/attendance/regularization/apply', payload).then((res) => res.data);
+export const getPendingRegularizationRequests = () =>
+  api.get('/manager/attendance-regularization/pending').then((res) => res.data);
+export const approveRegularization = (requestId, comment = 'Approved') =>
+  api.post(`/manager/attendance-regularization/${requestId}/approve`, { comment }).then((res) => res.data);
+export const rejectRegularization = (requestId, comment = 'Rejected') =>
+  api.post(`/manager/attendance-regularization/${requestId}/reject`, { comment }).then((res) => res.data);
 export const getAuditLogs = () => api.get('/audit/logs').then((res) => res.data);
 export const sendAgentMessage = (message) =>
   api.post('/agent/chat', { message }).then((res) => res.data);

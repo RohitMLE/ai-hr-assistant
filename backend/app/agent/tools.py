@@ -1,13 +1,21 @@
-from __future__ import annotations
-
+from datetime import date
 from typing import Optional
 
 from sqlalchemy.orm import Session
 
 from app.models.leave_request import LeaveRequest
 from app.models.user import User
+from app.schemas.attendance import AttendanceRegularizationApplyRequest
 from app.schemas.leave import LeaveApplyRequest
-from app.services.attendance_service import get_attendance_summary
+from app.services.attendance_service import (
+    approve_regularization_request,
+    create_regularization_request,
+    get_attendance_record_by_date,
+    get_attendance_summary,
+    get_my_regularization_requests,
+    get_pending_regularization_requests_for_manager,
+    reject_regularization_request,
+)
 from app.services.leave_service import (
     approve_leave_request,
     create_leave_request,
@@ -48,4 +56,30 @@ def reject_leave_request_tool(
     db: Session, manager: User, leave_request: LeaveRequest, comment: Optional[str]
 ):
     return reject_leave_request(db, manager, leave_request.id, comment)
+
+
+def get_attendance_record(db: Session, user: User, work_date: date):
+    return get_attendance_record_by_date(db, user, work_date)
+
+
+def create_attendance_regularization_request(
+    db: Session, user: User, payload: AttendanceRegularizationApplyRequest
+):
+    return create_regularization_request(db, user, payload)
+
+
+def get_pending_regularization_requests(db: Session, manager: User):
+    return get_pending_regularization_requests_for_manager(db, manager)
+
+
+def approve_regularization_request_tool(
+    db: Session, manager: User, request_id: int, comment: Optional[str]
+):
+    return approve_regularization_request(db, manager, request_id, comment)
+
+
+def reject_regularization_request_tool(
+    db: Session, manager: User, request_id: int, comment: Optional[str]
+):
+    return reject_regularization_request(db, manager, request_id, comment)
 

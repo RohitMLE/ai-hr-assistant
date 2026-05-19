@@ -1,14 +1,18 @@
 from __future__ import annotations
 
 import re
-from typing import Any
+from datetime import date
+from typing import Any, List, Optional
 
 from fastapi import HTTPException, status
 from sqlalchemy import extract, select
 from sqlalchemy.orm import Session
 
 from app.models.attendance_record import AttendanceRecord
+from app.models.attendance_regularization_request import AttendanceRegularizationRequest
 from app.models.user import User
+from app.schemas.attendance import AttendanceRegularizationApplyRequest
+from app.services.audit_service import write_audit_log
 
 
 MONTH_PATTERN = re.compile(r"^\d{4}-\d{2}$")
@@ -51,3 +55,145 @@ def get_attendance_summary(db: Session, user: User, month: str) -> dict[str, Any
         "holiday_days": len([r for r in records if r.status == "holiday"]),
         "late_days": len([r for r in records if r.is_late]),
     }
+
+
+def get_attendance_record_by_date(db: Session, user: User, work_date: date) -> Optional[AttendanceRecord]:
+    return db.scalar(
+        select(AttendanceRecord).where(
+            AttendanceRecord.user_id == user.id,
+            AttendanceRecord.work_date == work_date
+        )
+    )
+
+
+def create_regularization_request(
+    db: Session, user: User, payload: AttendanceRegularizationApplyRequest
+) -> AttendanceRegularizationRequest:
+    if not user.manager_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="You do not have a manager assigned for regularization approval.",
+        )
+
+    attendance_record = get_attendance_record_by_date(db, user, payload.work_date)
+
+    request = AttendanceRegularizationRequest(
+        employee_id=user.id,
+        manager_id=user.manager_id,
+        attendance_record_id=attendance_record.id if attendance_record else None,
+        work_date=payload.work_date,
+        issue_type=payload.issue_type,
+        requested_status=payload.requested_status,
+        reason=payload.reason,
+        status="pending",
+    )
+    db.add(request)
+    db.commit()
+    db.refresh(request)
+
+    write_audit_log(
+        db,
+        actor=user,
+        action="apply_regularization",
+        target_type="attendance_regularization_request",
+        target_id=request.id,
+        details={"date": str(payload.work_date), "issue_type": payload.issue_type},
+    )
+
+    return request
+
+
+def get_my_regularization_requests(db: Session, user: User) -> List[AttendanceRegularizationRequest]:
+    return list(
+        db.scalars(
+            select(AttendanceRegularizationRequest)
+            .where(AttendanceRegularizationRequest.employee_id == user.id)
+            .order_by(AttendanceRegularizationRequest.created_at.desc())
+        )
+    )
+
+
+def get_pending_regularization_requests_for_manager(
+    db: Session, manager: User
+) -> List[AttendanceRegularizationRequest]:
+    return list(
+        db.scalars(
+            select(AttendanceRegularizationRequest)
+            .where(
+                AttendanceRegularizationRequest.manager_id == manager.id,
+                AttendanceRegularizationRequest.status == "pending",
+            )
+            .order_by(AttendanceRegularizationRequest.created_at.desc())
+        )
+    )
+
+
+def approve_regularization_request(
+    db: Session, manager: User, request_id: int, comment: Optional[str] = None
+) -> AttendanceRegularizationRequest:
+    request = db.get(AttendanceRegularizationRequest, request_id)
+    if not request:
+        raise HTTPException(status_code=404, detail="Regularization request not found")
+    if request.manager_id != manager.id:
+        raise HTTPException(status_code=403, detail="Not authorized to approve this request")
+    if request.status != "pending":
+        raise HTTPException(status_code=400, detail="Only pending requests can be approved")
+
+    request.status = "approved"
+    request.manager_comment = comment
+
+    # Update attendance record if it exists, or create a new one
+    attendance_record = request.attendance_record
+    if attendance_record:
+        attendance_record.status = request.requested_status
+        attendance_record.is_late = False  # Regularization usually fixes late issues too if requested
+    else:
+        attendance_record = AttendanceRecord(
+            user_id=request.employee_id,
+            work_date=request.work_date,
+            status=request.requested_status,
+            is_late=False,
+        )
+        db.add(attendance_record)
+
+    db.commit()
+    db.refresh(request)
+
+    write_audit_log(
+        db,
+        actor=manager,
+        action="approve_regularization",
+        target_type="attendance_regularization_request",
+        target_id=request.id,
+        details={"comment": comment},
+    )
+
+    return request
+
+
+def reject_regularization_request(
+    db: Session, manager: User, request_id: int, comment: Optional[str] = None
+) -> AttendanceRegularizationRequest:
+    request = db.get(AttendanceRegularizationRequest, request_id)
+    if not request:
+        raise HTTPException(status_code=404, detail="Regularization request not found")
+    if request.manager_id != manager.id:
+        raise HTTPException(status_code=403, detail="Not authorized to reject this request")
+    if request.status != "pending":
+        raise HTTPException(status_code=400, detail="Only pending requests can be rejected")
+
+    request.status = "rejected"
+    request.manager_comment = comment
+    db.commit()
+    db.refresh(request)
+
+    write_audit_log(
+        db,
+        actor=manager,
+        action="reject_regularization",
+        target_type="attendance_regularization_request",
+        target_id=request.id,
+        details={"comment": comment},
+    )
+
+    return request

@@ -12,10 +12,12 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.agent import tools
+from app.models.attendance_regularization_request import AttendanceRegularizationRequest
 from app.models.leave_request import LeaveRequest
 from app.models.pending_action import PendingAction
 from app.models.user import User
 from app.schemas.agent import AgentChatResponse
+from app.schemas.attendance import AttendanceRegularizationApplyRequest
 from app.schemas.leave import ALLOWED_LEAVE_TYPES, LeaveApplyRequest
 from app.services.audit_service import write_audit_log
 
@@ -38,14 +40,27 @@ def handle_agent_chat(db: Session, user: User, message: str) -> AgentChatRespons
     if _is_confirm(normalized):
         return _confirm_pending_action(db, user)
 
-    if "pending" in normalized and ("approval" in normalized or "leave" in normalized):
+    if "pending" in normalized and ("approval" in normalized or "leave" in normalized or "regularization" in normalized or "request" in normalized):
+        if "regularization" in normalized or "attendance" in normalized:
+            return _handle_pending_regularization_approvals(db, user)
         return _handle_pending_approvals(db, user)
+
     if normalized.startswith("approve"):
+        if "regularization" in normalized or "attendance" in normalized:
+            return _handle_manager_regularization_decision(db, user, normalized, "approve_regularization")
         return _handle_manager_decision(db, user, normalized, "approve_leave_request")
+
     if normalized.startswith("reject"):
+        if "regularization" in normalized or "attendance" in normalized:
+            return _handle_manager_regularization_decision(db, user, normalized, "reject_regularization")
         return _handle_manager_decision(db, user, normalized, "reject_leave_request")
+
     if "apply" in normalized and "leave" in normalized:
         return _handle_apply_leave(db, user, normalized)
+
+    if "regularize" in normalized or "missed" in normalized or "forgot to" in normalized or "punch in" in normalized or "check-in" in normalized or "check-out" in normalized:
+        return _handle_regularization(db, user, normalized)
+
     if "attendance" in normalized:
         return _handle_attendance(db, user, normalized)
     if "leave request" in normalized or "my requests" in normalized:
@@ -243,6 +258,128 @@ def _handle_manager_decision(
     )
 
 
+def _handle_regularization(db: Session, user: User, normalized: str) -> AgentChatResponse:
+    if user.role != "employee":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only employees can apply for regularization through the assistant",
+        )
+
+    dates = _extract_dates(normalized)
+    if not dates:
+        return AgentChatResponse(
+            reply="Please mention the date you want to regularize. For example: I missed my check-in on 14 May.",
+            requires_confirmation=False,
+            pending_action_id=None,
+            data=None,
+        )
+    target_date = dates[0]
+
+    issue_type = "missing_checkin"
+    if "checkout" in normalized or "check-out" in normalized:
+        issue_type = "missing_checkout"
+    elif "status" in normalized or "wrong" in normalized:
+        issue_type = "wrong_status"
+
+    requested_status = "present"
+    if "wfh" in normalized:
+        requested_status = "wfh"
+    elif "half day" in normalized or "halfday" in normalized:
+        requested_status = "half_day"
+
+    reason = _extract_reason(normalized) or "Worked from office but forgot to punch in"
+
+    # Check existing attendance record
+    record = tools.get_attendance_record(db, user, target_date)
+
+    payload = {
+        "work_date": target_date.isoformat(),
+        "issue_type": issue_type,
+        "requested_status": requested_status,
+        "reason": reason,
+    }
+
+    pending = _create_pending_action(db, user, "apply_regularization", payload)
+
+    manager_name = user.manager.name if user.manager else "your manager"
+    reply = (
+        f"Goal:\nRegularize {issue_type.replace('_', ' ')} for {target_date.strftime('%d %b %Y')}.\n\n"
+        f"Plan:\n1. Identify date and issue type.\n2. Check attendance record.\n3. Prepare regularization request.\n4. Ask for human approval.\n5. Submit request to manager after confirmation.\n\n"
+        f"Human approval:\n"
+        f"Date: {target_date.strftime('%d %b %Y')}\n"
+        f"Issue: {issue_type.replace('_', ' ').capitalize()}\n"
+        f"Requested status: {requested_status.capitalize()}\n"
+        f"Reason: {reason}\n"
+        f"Approver: {manager_name}\n\n"
+        "Should I submit this regularization request?"
+    )
+
+    return AgentChatResponse(
+        reply=reply,
+        requires_confirmation=True,
+        pending_action_id=pending.id,
+        data=payload,
+    )
+
+
+def _handle_pending_regularization_approvals(db: Session, user: User) -> AgentChatResponse:
+    if user.role != "manager":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only managers can view pending regularization approvals",
+        )
+    requests = tools.get_pending_regularization_requests(db, user)
+    if not requests:
+        return AgentChatResponse(
+            reply="There are no pending attendance regularization requests assigned to you.",
+            requires_confirmation=False,
+            pending_action_id=None,
+            data={"items": []},
+        )
+    lines = [_manager_regularization_request_line(request) for request in requests]
+    return AgentChatResponse(
+        reply="Pending regularization requests:\n" + "\n".join(lines),
+        requires_confirmation=False,
+        pending_action_id=None,
+        data={"items": [_regularization_request_data(request) for request in requests]},
+    )
+
+
+def _handle_manager_regularization_decision(
+    db: Session, user: User, normalized: str, action_type: str
+) -> AgentChatResponse:
+    if user.role != "manager":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only managers can approve or reject regularization requests",
+        )
+    requests = tools.get_pending_regularization_requests(db, user)
+    target = _find_target_regularization_request(requests, normalized)
+    if target is None:
+        return AgentChatResponse(
+            reply="I could not find a matching pending regularization request assigned to you.",
+            requires_confirmation=False,
+            pending_action_id=None,
+            data={"items": [_regularization_request_data(request) for request in requests]},
+        )
+    comment = _extract_reason(normalized)
+    payload = {"request_id": target.id, "comment": comment}
+    pending = _create_pending_action(db, user, action_type, payload)
+    verb = "approve" if action_type == "approve_regularization" else "reject"
+    reply = (
+        f"You are about to {verb} {target.employee.name if target.employee else 'Employee'}'s "
+        f"regularization for {target.work_date}.\n"
+        f"Comment: {comment or 'Not provided'}.\n"
+        "Should I continue?"
+    )
+    return AgentChatResponse(
+        reply=reply,
+        requires_confirmation=True,
+        pending_action_id=pending.id,
+        data=payload,
+    )
+
+
 def _confirm_pending_action(db: Session, user: User) -> AgentChatResponse:
     pending = _get_latest_pending_action(db, user)
     if pending is None:
@@ -265,6 +402,16 @@ def _confirm_pending_action(db: Session, user: User) -> AgentChatResponse:
             pending_action_id=None,
             data={"leave_request": _leave_request_data(result)},
         )
+    if pending.action_type == "apply_regularization":
+        request_payload = AttendanceRegularizationApplyRequest(**payload)
+        result = tools.create_attendance_regularization_request(db, user, request_payload)
+        _complete_pending_action(db, pending)
+        return AgentChatResponse(
+            reply=f"Submitted regularization request #{result.id}. It is now pending manager approval.",
+            requires_confirmation=False,
+            pending_action_id=None,
+            data={"regularization_request": _regularization_request_data(result)},
+        )
     if pending.action_type in {"approve_leave_request", "reject_leave_request"}:
         if user.role != "manager":
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Manager role required")
@@ -283,6 +430,22 @@ def _confirm_pending_action(db: Session, user: User) -> AgentChatResponse:
             requires_confirmation=False,
             pending_action_id=None,
             data={"leave_request": _leave_request_data(result)},
+        )
+    if pending.action_type in {"approve_regularization", "reject_regularization"}:
+        if user.role != "manager":
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Manager role required")
+        if pending.action_type == "approve_regularization":
+            result = tools.approve_regularization_request_tool(db, user, int(payload["request_id"]), payload.get("comment"))
+            reply = f"Approved regularization request #{result.id}."
+        else:
+            result = tools.reject_regularization_request_tool(db, user, int(payload["request_id"]), payload.get("comment"))
+            reply = f"Rejected regularization request #{result.id}."
+        _complete_pending_action(db, pending)
+        return AgentChatResponse(
+            reply=reply,
+            requires_confirmation=False,
+            pending_action_id=None,
+            data={"regularization_request": _regularization_request_data(result)},
         )
     raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unsupported pending action")
 
@@ -420,6 +583,48 @@ def _find_target_request(requests: list[LeaveRequest], normalized: str) -> Optio
         if first_name and first_name in normalized:
             return request
     return requests[0] if len(requests) == 1 else None
+
+
+def _find_target_regularization_request(
+    requests: list[AttendanceRegularizationRequest], normalized: str
+) -> Optional[AttendanceRegularizationRequest]:
+    id_match = re.search(r"#?(\d+)", normalized)
+    if id_match:
+        target_id = int(id_match.group(1))
+        for request in requests:
+            if request.id == target_id:
+                return request
+    for request in requests:
+        name = (request.employee.name if request.employee else "").lower()
+        first_name = name.split()[0] if name else ""
+        if first_name and first_name in normalized:
+            return request
+    return requests[0] if len(requests) == 1 else None
+
+
+def _manager_regularization_request_line(request: AttendanceRegularizationRequest) -> str:
+    emp_name = request.employee.name if request.employee else f"Employee {request.employee_id}"
+    return (
+        f"#{request.id}: {emp_name} requested {request.requested_status} for {request.work_date} "
+        f"({request.issue_type.replace('_', ' ')})."
+    )
+
+
+def _regularization_request_data(request: AttendanceRegularizationRequest) -> dict[str, Any]:
+    return {
+        "id": request.id,
+        "employee_id": request.employee_id,
+        "employee_name": request.employee.name if request.employee else f"Employee {request.employee_id}",
+        "manager_id": request.manager_id,
+        "attendance_record_id": request.attendance_record_id,
+        "work_date": request.work_date.isoformat(),
+        "issue_type": request.issue_type,
+        "requested_status": request.requested_status,
+        "reason": request.reason,
+        "status": request.status,
+        "manager_comment": request.manager_comment,
+        "created_at": request.created_at.isoformat() if request.created_at else None,
+    }
 
 
 def _manager_request_line(request: LeaveRequest) -> str:

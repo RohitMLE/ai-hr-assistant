@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import date, datetime, timezone
 from typing import Optional
 
-from sqlalchemy import Boolean, Date, DateTime, Integer, String
+from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.session import Base
@@ -25,7 +25,9 @@ class User(Base):
         String(30), unique=True, index=True, nullable=False
     )
     department: Mapped[str] = mapped_column(String(100), nullable=False)
-    manager_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
+    manager_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("users.id"), nullable=True, index=True
+    )
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     date_of_joining: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
@@ -39,3 +41,4 @@ class User(Base):
         back_populates="employee",
         foreign_keys="LeaveRequest.employee_id",
     )
+    manager = relationship("User", remote_side=[id])
