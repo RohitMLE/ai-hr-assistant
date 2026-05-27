@@ -1,6 +1,7 @@
 from datetime import date
 from pathlib import Path
 import sys
+from decimal import Decimal
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -14,8 +15,10 @@ from app.db.session import SessionLocal
 from app.models.audit_log import AuditLog
 from app.models.attendance_record import AttendanceRecord
 from app.models.attendance_regularization_request import AttendanceRegularizationRequest
+from app.models.hr_policy import HRPolicy
 from app.models.leave_balance import LeaveBalance
 from app.models.leave_request import LeaveRequest
+from app.models.payslip import Payslip
 from app.models.pending_action import PendingAction
 from app.models.user import User
 
@@ -27,6 +30,8 @@ def seed() -> None:
         db.execute(delete(AuditLog))
         db.execute(delete(AttendanceRecord))
         db.execute(delete(AttendanceRegularizationRequest))
+        db.execute(delete(HRPolicy))
+        db.execute(delete(Payslip))
         db.execute(delete(PendingAction))
         db.execute(delete(LeaveRequest))
         db.execute(delete(LeaveBalance))
@@ -97,6 +102,39 @@ def seed() -> None:
             AttendanceRecord(user_id=employee.id, work_date=date(2026, 5, 18), status="present"),
         ]
         db.add_all(attendance)
+
+        # Seed Payslips
+        payslips = [
+            Payslip(
+                user_id=employee.id,
+                month="2026-04",
+                earnings=Decimal("85000.00"),
+                deductions=Decimal("5000.00"),
+                tax=Decimal("8500.00"),
+                net_pay=Decimal("71500.00"),
+            )
+        ]
+        db.add_all(payslips)
+
+        # Seed Policies
+        policies = [
+            HRPolicy(
+                title="Work From Home Policy",
+                category="Remote Work",
+                content="Employees are allowed to work from home for up to 2 days per week with manager approval. Core working hours are 10 AM to 4 PM.",
+            ),
+            HRPolicy(
+                title="Leave Policy",
+                category="Time Off",
+                content="Employees are entitled to 12 casual leaves, 12 sick leaves, and 15 earned leaves per year. Comp-off must be used within 60 days.",
+            ),
+            HRPolicy(
+                title="Code of Conduct",
+                category="General",
+                content="All employees are expected to maintain professional behavior and adhere to the company's anti-harassment and ethics guidelines.",
+            )
+        ]
+        db.add_all(policies)
 
         db.add(
             AuditLog(

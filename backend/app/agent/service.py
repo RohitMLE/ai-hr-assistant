@@ -58,11 +58,24 @@ def handle_agent_chat(db: Session, user: User, message: str) -> AgentChatRespons
     if "apply" in normalized and "leave" in normalized:
         return _handle_apply_leave(db, user, normalized)
 
-    if "regularize" in normalized or "missed" in normalized or "forgot to" in normalized or "punch in" in normalized or "check-in" in normalized or "check-out" in normalized:
+    # Keywords for attendance regularization
+    reg_keywords = [
+        "regularize", "regularization", "missed", "forgot", "forget", 
+        "punch in", "punch out", "check in", "check out", 
+        "check-in", "check-out", "forgot to punch", "forgot to check"
+    ]
+    if any(k in normalized for k in reg_keywords):
         return _handle_regularization(db, user, normalized)
 
     if "attendance" in normalized:
         return _handle_attendance(db, user, normalized)
+
+    if "payslip" in normalized or "payroll" in normalized or "salary" in normalized or "tax" in normalized:
+        return _handle_payslip(db, user)
+
+    if "policy" in normalized or "rules" in normalized or "wfh" in normalized or "remote" in normalized:
+        return _handle_policy_query(db, user, normalized)
+
     if "leave request" in normalized or "my requests" in normalized:
         return _handle_leave_requests(db, user)
     if "how many" in normalized and ("leave" in normalized or "leaves" in normalized):
@@ -540,13 +553,43 @@ def _extract_date_range(normalized: str) -> tuple[Optional[date], Optional[date]
 
 
 def _extract_dates(normalized: str) -> list[date]:
-    pattern = r"(\d{1,2})\s+(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)(?:\s+(\d{4}))?"
-    matches = re.findall(pattern, normalized)
+    month_pattern = r"(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)"
+    day_pattern = r"(\d{1,2})(?:st|nd|rd|th)?"
+    year_pattern = r"(?:\s+(\d{4}))?"
+
+    # Pattern 1: 15th May 2026
+    pattern1 = f"{day_pattern}\\s+{month_pattern}{year_pattern}"
+    # Pattern 2: May 15th 2026
+    pattern2 = f"{month_pattern}\\s+{day_pattern}{year_pattern}"
+
     dates = []
-    for day_text, month_text, year_text in matches:
-        month = MONTHS.get(month_text[:3]) if month_text[:3] != "may" else 5
-        year = int(year_text) if year_text else 2026
-        dates.append(date(year, month, int(day_text)))
+    
+    # Try Pattern 1
+    for d, m, y in re.findall(pattern1, normalized):
+        month_abbr = m[:3].lower()
+        month = MONTHS.get(month_abbr)
+        if month_abbr == "may": month = 5
+        year = int(y) if y else 2026
+        try:
+            dates.append(date(year, month, int(d)))
+        except (TypeError, ValueError):
+            continue
+
+    # Try Pattern 2
+    for m, d, y in re.findall(pattern2, normalized):
+        month_abbr = m[:3].lower()
+        month = MONTHS.get(month_abbr)
+        if month_abbr == "may": month = 5
+        year = int(y) if y else 2026
+        # Avoid duplicates if both patterns match (though unlikely with whitespace)
+        new_date = None
+        try:
+            new_date = date(year, month, int(d))
+        except (TypeError, ValueError):
+            continue
+        if new_date and new_date not in dates:
+            dates.append(new_date)
+
     return dates
 
 
@@ -631,6 +674,78 @@ def _manager_request_line(request: LeaveRequest) -> str:
     return (
         f"#{request.id}: {_employee_name(request)} requested {_titleize(request.leave_type)} "
         f"from {request.start_date} to {request.end_date}."
+    )
+
+
+def _handle_payslip(db: Session, user: User) -> AgentChatResponse:
+    payslip = tools.get_my_payslip_summary_tool(db, user)
+    if not payslip:
+        return AgentChatResponse(
+            reply="I could not find any payslip records for your account.",
+            requires_confirmation=False,
+            pending_action_id=None,
+            data=None,
+        )
+    
+    reply = (
+        f"Here is a summary of your latest payslip ({payslip.month}):\n"
+        f"Earnings: {payslip.earnings:g}\n"
+        f"Deductions: {payslip.deductions:g}\n"
+        f"Tax: {payslip.tax:g}\n"
+        f"Net Pay: {payslip.net_pay:g}"
+    )
+    return AgentChatResponse(
+        reply=reply,
+        requires_confirmation=False,
+        pending_action_id=None,
+        data={
+            "month": payslip.month,
+            "earnings": str(payslip.earnings),
+            "deductions": str(payslip.deductions),
+            "tax": str(payslip.tax),
+            "net_pay": str(payslip.net_pay),
+        },
+    )
+
+
+def _handle_policy_query(db: Session, user: User, normalized: str) -> AgentChatResponse:
+    # Extract potential policy keywords
+    query = normalized.replace("?", "").replace(".", "").strip()
+    
+    # Remove common filler phrases
+    fillers = [
+        "what is", "what are", "show me", "tell me about", "our", "the", 
+        "policy on", "policy regarding", "policy for", "rules for",
+        "regulations for", "information about", "policy"
+    ]
+    for filler in fillers:
+        query = query.replace(filler, "")
+    
+    query = query.strip()
+    
+    # If the user just asked "what is the policy", query might be empty
+    search_term = query if query else "policy"
+    
+    policies = tools.search_hr_policies_tool(db, search_term)
+    if not policies:
+        return AgentChatResponse(
+            reply="I couldn't find a specific policy regarding your query. Please check the HR portal or contact HR.",
+            requires_confirmation=False,
+            pending_action_id=None,
+            data=None,
+        )
+    
+    policy = policies[0]
+    reply = f"**{policy.title}**\n\n{policy.content}"
+    if len(policies) > 1:
+        others = ", ".join([p.title for p in policies[1:3]])
+        reply += f"\n\n(See also: {others})"
+        
+    return AgentChatResponse(
+        reply=reply,
+        requires_confirmation=False,
+        pending_action_id=None,
+        data={"items": [{"title": p.title, "content": p.content} for p in policies]},
     )
 
 

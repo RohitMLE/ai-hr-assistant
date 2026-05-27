@@ -78,8 +78,13 @@ def approve_regularization_request_tool(
     return approve_regularization_request(db, manager, request_id, comment)
 
 
-def reject_regularization_request_tool(
-    db: Session, manager: User, request_id: int, comment: Optional[str]
-):
-    return reject_regularization_request(db, manager, request_id, comment)
+from app.services.payroll_service import get_latest_payslip
+from app.services.policy_service import search_policies
+...
+def get_my_payslip_summary_tool(db: Session, user: User):
+    return get_latest_payslip(db, user)
+
+
+def search_hr_policies_tool(db: Session, query: str):
+    return search_policies(db, query)
 

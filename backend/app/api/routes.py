@@ -10,6 +10,18 @@ from app.core.security import create_access_token, verify_password
 from app.db.session import get_db
 from app.models.audit_log import AuditLog
 from app.models.user import User
+from app.schemas.agent import AgentChatRequest, AgentChatResponse
+from app.schemas.auth import CurrentUserResponse, LoginRequest, LoginResponse
+from app.schemas.audit import AuditLogsResponse
+from app.schemas.employee import EmployeeMeResponse
+from app.schemas.leave import (
+    LeaveApplyRequest,
+    LeaveBalanceItem,
+    LeaveBalanceResponse,
+    LeaveDecisionRequest,
+    LeaveRequestResponse,
+    LeaveRequestsResponse,
+)
 from app.schemas.attendance import (
     AttendanceRegularizationApplyRequest,
     AttendanceRegularizationDecisionRequest,
@@ -213,6 +225,32 @@ def manager_reject_leave(
     db: Session = Depends(get_db),
 ):
     return reject_leave_request(db, current_user, leave_id, payload.comment)
+
+
+from app.schemas.payroll import PayslipListResponse, PayslipResponse
+from app.schemas.policy import HRPolicyListResponse, HRPolicyResponse
+from app.services.payroll_service import get_latest_payslip, get_my_payslips
+from app.services.policy_service import get_all_policies, search_policies
+...
+@router.get("/payroll/my-payslips", response_model=PayslipListResponse)
+def my_payslips(
+    current_user: User = Depends(get_current_user), db: Session = Depends(get_db)
+) -> PayslipListResponse:
+    return PayslipListResponse(items=get_my_payslips(db, current_user))
+
+
+@router.get("/policy/all", response_model=HRPolicyListResponse)
+def all_policies(
+    _current_user: User = Depends(get_current_user), db: Session = Depends(get_db)
+) -> HRPolicyListResponse:
+    return HRPolicyListResponse(items=get_all_policies(db, db))
+
+
+@router.get("/policy/search", response_model=HRPolicyListResponse)
+def search_policy(
+    q: str, _current_user: User = Depends(get_current_user), db: Session = Depends(get_db)
+) -> HRPolicyListResponse:
+    return HRPolicyListResponse(items=search_policies(db, q))
 
 
 @router.get("/audit/logs", response_model=AuditLogsResponse)

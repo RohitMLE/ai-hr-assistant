@@ -23,11 +23,26 @@ def verify():
             print("Error: Seed data missing. Run seed.py first.")
             return
 
-        print("--- STEP 1: Employee Missed Check-in Request ---")
-        msg1 = "I missed my check-in on 14 May. I worked from office but forgot to punch in."
+        print("--- STEP 1: Employee Missed Check-in Request (15th may) ---")
+        msg1 = "i missed my check in 15th may i worked from office but forget to punch it"
         print(f"Vineet: {msg1}")
         resp1 = handle_agent_chat(db, vineet, msg1)
         print(f"Agent Reply:\n{resp1.reply}")
+        
+        if not resp1.requires_confirmation:
+            print("FAILED: Date not extracted correctly for '15th may'.")
+            return
+
+        print("\n--- STEP 1b: Employee Missed Check-in Request (may 16th) ---")
+        msg1b = "i forget to check in on may 16th"
+        print(f"Vineet: {msg1b}")
+        resp1b = handle_agent_chat(db, vineet, msg1b)
+        print(f"Agent Reply:\n{resp1b.reply}")
+        
+        if not resp1b.requires_confirmation:
+            print("FAILED: Date not extracted correctly for 'may 16th'.")
+            return
+
         print(f"Requires Confirmation: {resp1.requires_confirmation}")
         print(f"Pending Action ID: {resp1.pending_action_id}")
 
