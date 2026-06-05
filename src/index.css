@@ -1,0 +1,65 @@
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=Sora:wght@300;400;600;700;800&family=DM+Mono:wght@400;500&display=swap');
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg:       #050811;
+  --bg2:      #090e1c;
+  --bg3:      #0c1222;
+  --bg4:      #101829;
+  --bg5:      #141e32;
+  --border:   rgba(148,163,255,0.07);
+  --border2:  rgba(148,163,255,0.16);
+  --accent:   #6c8fff;
+  --accent2:  #a5b8ff;
+  --glow:     rgba(108,143,255,0.45);
+  --green:    #00e5a0;
+  --red:      #ff3d5a;
+  --orange:   #ff7a3d;
+  --purple:   #c084fc;
+  --pink:     #f472b6;
+  --gold:     #f4c542;
+  --text:     #eef2ff;
+  --text2:    #8898cc;
+  --text3:    #3d5080;
+
+  --font-display: 'Sora', sans-serif;
+  --font-body:    'Plus Jakarta Sans', sans-serif;
+  --font-mono:    'DM Mono', monospace;
+}
+
+body {
+  font-family: var(--font-body);
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+  overflow-x: hidden;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  letter-spacing: -0.01em;
+}
+
+#root { min-height: 100vh; }
+
+::selection { background: rgba(79,142,247,0.3); color: white; }
+
+::-webkit-scrollbar { width: 4px; }
+::-webkit-scrollbar-track { background: var(--bg); }
+::-webkit-scrollbar-thumb { background: var(--bg5); border-radius: 2px; }
+::-webkit-scrollbar-thumb:hover { background: var(--accent); }
+
+@keyframes spin       { to { transform: rotate(360deg); } }
+@keyframes pulse-glow { 0%,100% { opacity: 0.6; } 50% { opacity: 1; } }
+@keyframes scan-line  { 0% { top: 0%; } 100% { top: 100%; } }
+@keyframes float      { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-8px); } }
+@keyframes shimmer    { 0% { background-position: -200% 0; } 100% { background-position: 200% 0; } }
+@keyframes number-up  { from { opacity:0; transform:translateY(10px); } to { opacity:1; transform:translateY(0); } }
+
+.shimmer {
+  background: linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.06) 50%, transparent 100%);
+  background-size: 200% 100%;
+  animation: shimmer 2s infinite;
+}
+
+textarea:focus { outline: none; }
+button { font-family: 'Inter', sans-serif; }
