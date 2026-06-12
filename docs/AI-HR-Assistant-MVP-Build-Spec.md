@@ -215,3 +215,246 @@ When implementation begins, include mock data for:
 - Assistant cannot access unauthorized employee data.
 - API and database behavior match the docs in this repository.
 
+## 13. Current Repository Audit
+
+The repository now contains an active FastAPI + React implementation in addition to the planning documents. Future work must preserve existing behavior and avoid rebuilding modules that are already present.
+
+### Backend Structure Observed
+
+```text
+backend/
+  app/
+    api/v1/              # Modular FastAPI routers currently included by app/main.py
+    agent/               # Controlled tool registry/executor/service
+    core/                # Security and configuration
+    db/                  # SQLAlchemy base/session/init
+    models/              # User, org, employee profile, leave, attendance, payroll, policy, recruitment
+    schemas/             # Pydantic request/response schemas
+    services/            # Business logic services
+  alembic/               # Versioned migrations
+  scripts/               # Seed and verification scripts
+```
+
+`backend/app/api/routes.py` is an older monolithic route file. The running app imports `backend/app/api/v1/__init__.py`, so new modules should continue the `api/v1/<module>.py` pattern instead of adding to the monolithic file.
+
+### Frontend Structure Observed
+
+```text
+frontend/src/
+  api/client.js
+  api/hrms.js
+  api/modules/           # Module-level API wrappers
+  auth/AuthContext.jsx
+  components/            # Shared layout, protected route, badge, alert, loading, empty state
+  pages/                 # Operational HRMS pages
+  utils/
+```
+
+The frontend uses React routes, role-aware `ProtectedRoute`, Tailwind utility classes, and module API wrappers. Redux is not currently present in the observed files; do not introduce it unless a later implementation need justifies the added complexity.
+
+### Existing Modules Observed
+
+- Auth: JWT login and `/auth/me`.
+- RBAC: role strings plus `roles`, `permissions`, and `role_permissions` models. Some routes still use role helpers; future work should converge on backend permission dependencies.
+- Core HR: employee list/detail/create/update, documents, bank details, emergency contacts, job history, work locations, employment types, departments, and designations.
+- Recruitment: jobs, candidates, offers, dashboard, and candidate-to-employee conversion.
+- Onboarding: onboarding cases, default checklist tasks, dashboard, task status updates, and recruitment conversion handoff.
+- Attendance: summary and regularization workflows.
+- Leave: balance, request creation, employee request history, manager approval/rejection.
+- Payroll: payslip summaries.
+- Compliance/policy: policy listing/search.
+- Audit/AI Agent: audit log access and controlled assistant layer.
+
+### Phase 1 Gaps To Close Before Phase 2
+
+- Normalize endpoint documentation to the active `/api/v1` modular router.
+- Move any remaining references away from the legacy monolithic route style.
+- Replace placeholder recruitment conversion data with deterministic employee code generation and department name lookup.
+- Ensure employee access checks distinguish direct-report access from broad manager access.
+- Apply permission names consistently in backend dependencies, not only role checks.
+- Add audit log entries for employee creation/update, document verification, and candidate-to-employee conversion.
+- Confirm migration coverage for all active SQLAlchemy models and seed reference data for roles, permissions, departments, designations, work locations, and employment types.
+- Add focused backend tests for Core HR CRUD, RBAC, and recruitment-to-employee conversion.
+
+## 14. Target HRMS Platform Architecture
+
+```text
+HRMS Platform
+  Auth & Role Management
+  Core HR
+  Recruitment
+  Onboarding
+  Attendance
+  Leave
+  Payroll
+  Travel & Expense
+  Performance
+  Learning
+  Engagement
+  Rewards
+  Assets
+  Helpdesk
+  Compliance
+  Workforce Planning
+  Analytics
+  Exit Management
+```
+
+Each module should keep the same implementation shape:
+
+- SQLAlchemy models and Alembic migration.
+- Pydantic request/response schemas.
+- FastAPI router under `backend/app/api/v1`.
+- Service layer under `backend/app/services`.
+- Backend permission checks using roles and permissions.
+- Audit logs for sensitive reads, writes, approvals, conversions, and payroll-facing actions.
+- Frontend API wrapper under `frontend/src/api/modules`.
+- React page under `frontend/src/pages`, using existing shared UI states.
+- Role-aware route and sidebar entry.
+- Table/list view, detail view, forms, status badges, loading states, empty states, and error states.
+
+## 15. HR Lifecycle Model
+
+The product should evolve around this lifecycle:
+
+```text
+Candidate
+  -> Selected Candidate
+  -> Offer Released
+  -> Employee Onboarded
+  -> Active Employee
+  -> Attendance / Leave / Payroll / Performance / Travel
+  -> Growth / Learning / Rewards
+  -> Exit / Full and Final Settlement
+```
+
+Recruitment, onboarding, Core HR, payroll, assets, and exit management must share stable employee and candidate identifiers. Do not create duplicate employee master records when extending later modules.
+
+## 16. Module-Wise Architecture
+
+| Module | Core Tables | API Area | Frontend Area | Workflow |
+| --- | --- | --- | --- | --- |
+| Auth & Roles | `users`, `roles`, `permissions`, `role_permissions` | `/api/v1/auth`, future `/api/v1/roles` | Login, settings | Login, role resolution, permission enforcement |
+| Core HR | `users`, `departments`, `designations`, `employee_documents`, `employee_bank_details`, `employee_emergency_contacts`, `employee_job_history`, `work_locations`, `employment_types` | `/api/v1/employees`, `/api/v1/org` | Core HR, Employee Master | Create/update employee, maintain profile, documents, org mapping |
+| Recruitment | `jobs`, `candidates`, `offers` | `/api/v1/recruitment` | Recruitment | Job, candidate pipeline, offer, conversion |
+| Onboarding | `onboarding_cases`, `onboarding_tasks`, `policy_acknowledgments`, future asset/account requests | `/api/v1/onboarding` | Onboarding | Candidate joined, task checklist, document verification, completion |
+| Attendance | `attendance_records`, `attendance_regularization_requests`, future `shifts`, `holidays` | `/api/v1/attendance` | Attendance, Regularization | Clock/record, summary, correction approval |
+| Leave | `leave_types`, `leave_balances`, `leave_requests`, future holidays/comp-off | `/api/v1/leave` | Leave, Manager Approvals | Apply, approve/reject, balance update |
+| Payroll | `payroll_structures`, `payroll_runs`, `payslips`, future F&F tables | `/api/v1/payroll` | Payroll | Inputs from attendance, leave, overtime, expenses, deductions |
+| Travel & Expense | `travel_requests`, `expense_claims`, `expense_items`, `expense_attachments` | `/api/v1/travel-requests`, `/api/v1/expense-claims` | Travel & Expense | Request, approval, bills, finance verification, reimbursement |
+| Performance | `performance_cycles`, `performance_goals`, `performance_reviews`, `feedback_requests` | `/api/v1/performance` | Performance | Goals, self review, manager review, ratings, PIP |
+| Learning | `learning_courses`, `learning_assignments`, `certifications`, `skills` | `/api/v1/learning` | Learning | Assign courses, track progress, skill matrix |
+| Engagement | `announcements`, `surveys`, `polls`, `survey_responses` | `/api/v1/engagement` | Engagement | Announcements, surveys, polls, feedback |
+| Rewards | `recognitions`, `reward_points`, `badges` | `/api/v1/rewards` | Rewards | Peer/manager recognition, points, certificates |
+| Assets | `assets`, `asset_assignments`, `asset_return_tasks` | `/api/v1/assets` | Assets | Inventory, allocation, return, damage status |
+| Helpdesk | `helpdesk_tickets`, `ticket_comments`, `ticket_attachments` | `/api/v1/helpdesk` | Helpdesk | Raise, assign, SLA, comments, resolution |
+| Compliance | `hr_policies`, `policy_documents`, `policy_acknowledgments`, `compliance_checklists` | `/api/v1/compliance`, `/api/v1/policies` | Compliance | Policy management, acknowledgments, audit |
+| Workforce Planning | `workforce_plans`, `headcount_budgets`, `skill_gap_items` | `/api/v1/workforce-planning` | Workforce Planning | Headcount, budget, skill gap, forecast |
+| Analytics | Read models/views over existing tables | `/api/v1/analytics` | Analytics | Charts, dashboards, exports |
+| Exit | `exit_requests`, `exit_clearance_tasks`, `final_settlements`, `exit_interviews` | `/api/v1/exits` | Exit Management | Resignation, approval, clearance, F&F, letters |
+
+## 17. Roles And Permission Model
+
+Target roles:
+
+- `super_admin`
+- `hr_admin`
+- `hr_manager`
+- `recruiter`
+- `hiring_manager`
+- `finance_manager`
+- `payroll_manager`
+- `department_manager`
+- `employee`
+- `it_admin_staff`
+
+Initial permissions:
+
+- `view_employee`
+- `add_employee`
+- `edit_employee`
+- `delete_employee`
+- `approve_leave`
+- `process_payroll`
+- `approve_expense`
+- `manage_assets`
+- `view_reports`
+- `manage_recruitment`
+- `manage_onboarding`
+- `manage_exit`
+
+Permission checks must run on the backend. Frontend role visibility is only a usability layer and must never be the only enforcement point.
+
+## 18. Phase-Wise Implementation Plan
+
+### Phase 1: Core HR Foundation
+
+Status: started in the current codebase.
+
+- Finish auditing the existing route, service, schema, model, migration, seed, and frontend patterns.
+- Stabilize Core HR employee master around the active `api/v1` router.
+- Complete departments, designations, work locations, employment types, employee documents, bank details, emergency contacts, and job history.
+- Harden RBAC with permission dependencies for Core HR routes.
+- Preserve existing recruitment, leave, attendance, payroll, compliance, audit, and agent behavior.
+- Add backend tests for employee CRUD, sensitive subresources, direct-report access, and HR admin access.
+
+### Phase 2: Recruitment To Onboarding
+
+- Extend existing recruitment without rebuilding it.
+- Add job approval workflow, candidate pipeline status history, interview feedback, and richer offer metadata.
+- Expand the implemented onboarding cases and task checklists linked to offered/hired candidates.
+- Add document verification, policy acknowledgment completion, asset/account request handoffs, and employee-facing onboarding views.
+
+### Phase 3: Attendance And Leave
+
+- Add shifts, holidays, work-from-home, overtime, comp-off, and richer monthly summaries.
+- Ensure leave approvals update balances and expose payroll-impact metadata.
+- Add team attendance and leave reports for managers and HR admins.
+
+### Phase 4: Payroll Basic
+
+- Add salary structures, payroll runs, payslip generation, payroll approval, and locked payroll periods.
+- Consume attendance, leave, overtime, reimbursements, bonus, and deduction inputs.
+- Keep this as mock payroll logic and avoid production payroll claims.
+
+### Phase 5: Travel And Expense
+
+- Add travel requests, policy validation placeholders, travel advance, expense claims, bill uploads, approval, finance verification, and reimbursement handoff to payroll.
+
+### Phase 6: Performance, Learning, Engagement, Rewards
+
+- Add goal/KRA/KPI tracking, review cycles, 360 feedback, learning courses, assignments, surveys, announcements, recognitions, and points history.
+
+### Phase 7: Assets, Helpdesk, Compliance, Exit
+
+- Add asset inventory/allocation/return, HR service desk tickets, policy acknowledgments/compliance checklists, resignation, clearance, and full-and-final workflow.
+
+### Phase 8: Workforce Planning, Analytics, Notifications
+
+- Add headcount planning, budgets, skill gap analysis, cross-module dashboards, exportable reports, and notification records.
+
+## 19. Frontend Navigation Target
+
+The sidebar should eventually include:
+
+- Dashboard
+- Core HR
+- Recruitment
+- Onboarding
+- Attendance
+- Leave
+- Payroll
+- Travel & Expense
+- Performance
+- Learning
+- Engagement
+- Rewards
+- Assets
+- Helpdesk
+- Compliance
+- Workforce Planning
+- Analytics
+- Exit Management
+- Settings
+
+Only expose entries that have working routes or intentional placeholder pages. Placeholder pages should be explicit module shells with empty states, not broken links.

@@ -13,6 +13,7 @@ from app.models.attendance_regularization_request import AttendanceRegularizatio
 from app.models.user import User
 from app.schemas.attendance import AttendanceRegularizationApplyRequest
 from app.services.audit_service import write_audit_log
+from datetime import datetime
 
 
 MONTH_PATTERN = re.compile(r"^\d{4}-\d{2}$")
@@ -54,6 +55,9 @@ def get_attendance_summary(db: Session, user: User, month: str) -> dict[str, Any
         "leave_days": len([r for r in records if r.status == "leave"]),
         "holiday_days": len([r for r in records if r.status == "holiday"]),
         "late_days": len([r for r in records if r.is_late]),
+        "wfh_days": len([r for r in records if r.is_wfh]),
+        "overtime_hours": sum([float(r.overtime_hours) for r in records if r.overtime_hours]),
+        "comp_off_days": len([r for r in records if r.comp_off_earned]),
     }
 
 
@@ -64,6 +68,71 @@ def get_attendance_record_by_date(db: Session, user: User, work_date: date) -> O
             AttendanceRecord.work_date == work_date
         )
     )
+
+def clock_in(db: Session, user: User) -> AttendanceRecord:
+    today = date.today()
+    record = get_attendance_record_by_date(db, user, today)
+    if record and record.check_in:
+        raise HTTPException(status_code=400, detail="Already clocked in today")
+    
+    now_time = datetime.now().strftime("%H:%M")
+    if not record:
+        record = AttendanceRecord(
+            user_id=user.id,
+            work_date=today,
+            status="present",
+            check_in=now_time
+        )
+        db.add(record)
+    else:
+        record.check_in = now_time
+        record.status = "present"
+    
+    db.flush()
+    write_audit_log(db, actor=user, action="clock_in", target_type="attendance_record", target_id=record.id, details={"time": now_time})
+    db.commit()
+    db.refresh(record)
+    return record
+
+def clock_out(db: Session, user: User) -> AttendanceRecord:
+    today = date.today()
+    record = get_attendance_record_by_date(db, user, today)
+    if not record or not record.check_in:
+        raise HTTPException(status_code=400, detail="Must clock in first")
+    if record.check_out:
+        raise HTTPException(status_code=400, detail="Already clocked out today")
+    
+    now_time = datetime.now().strftime("%H:%M")
+    record.check_out = now_time
+    
+    write_audit_log(db, actor=user, action="clock_out", target_type="attendance_record", target_id=record.id, details={"time": now_time})
+    db.commit()
+    db.refresh(record)
+    return record
+
+def get_team_attendance_summary(db: Session, manager: User, month: str) -> dict[str, Any]:
+    if manager.role not in ["manager", "hr_admin"]:
+        raise HTTPException(status_code=403, detail="Not authorized")
+    
+    query = select(User)
+    if manager.role == "manager":
+        query = query.where(User.manager_id == manager.id)
+        
+    team_members = db.scalars(query).all()
+    
+    team_summaries = []
+    for member in team_members:
+        summary = get_attendance_summary(db, member, month)
+        team_summaries.append({
+            "employee_id": member.id,
+            "employee_name": member.name,
+            "summary": summary
+        })
+        
+    return {
+        "month": month,
+        "team_summaries": team_summaries
+    }
 
 
 def create_regularization_request(

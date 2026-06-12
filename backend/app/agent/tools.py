@@ -24,7 +24,14 @@ from app.services.leave_service import (
     get_user_leave_balances,
     reject_leave_request,
 )
-
+from app.services.payroll_service import get_latest_payslip
+from app.services.policy_service import search_policies
+from app.services.org_service import get_all_departments, get_all_designations
+from app.services.recruitment_service import (
+    get_all_jobs,
+    get_all_candidates,
+    convert_candidate_to_employee
+)
 
 def get_leave_balance(db: Session, user: User):
     return get_user_leave_balances(db, user)
@@ -78,9 +85,12 @@ def approve_regularization_request_tool(
     return approve_regularization_request(db, manager, request_id, comment)
 
 
-from app.services.payroll_service import get_latest_payslip
-from app.services.policy_service import search_policies
-...
+def reject_regularization_request_tool(
+    db: Session, manager: User, request_id: int, comment: Optional[str]
+):
+    return reject_regularization_request(db, manager, request_id, comment)
+
+
 def get_my_payslip_summary_tool(db: Session, user: User):
     return get_latest_payslip(db, user)
 
@@ -88,3 +98,20 @@ def get_my_payslip_summary_tool(db: Session, user: User):
 def search_hr_policies_tool(db: Session, query: str):
     return search_policies(db, query)
 
+
+def get_org_hierarchy_tool(db: Session):
+    return {
+        "departments": get_all_departments(db),
+        "designations": get_all_designations(db)
+    }
+
+
+def get_recruitment_summary_tool(db: Session):
+    return {
+        "jobs": get_all_jobs(db),
+        "candidates": get_all_candidates(db)
+    }
+
+
+def hire_candidate_tool(db: Session, candidate_id: int, actor: User):
+    return convert_candidate_to_employee(db, candidate_id, actor)

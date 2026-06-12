@@ -1,397 +1,353 @@
 from __future__ import annotations
 
-import calendar
 import json
 import re
 from datetime import date
-from decimal import Decimal
 from typing import Any, Optional
 
-from fastapi import HTTPException, status
-from sqlalchemy import select
+import anthropic
 from sqlalchemy.orm import Session
 
-from app.agent import tools
-from app.models.attendance_regularization_request import AttendanceRegularizationRequest
-from app.models.leave_request import LeaveRequest
+from app.agent.executor import execute_confirmed_write, execute_tool
+from app.agent.registry import WRITE_TOOLS, get_tools_for_user
+from app.core.config import get_settings
 from app.models.pending_action import PendingAction
 from app.models.user import User
-from app.schemas.agent import AgentChatResponse
-from app.schemas.attendance import AttendanceRegularizationApplyRequest
-from app.schemas.leave import ALLOWED_LEAVE_TYPES, LeaveApplyRequest
+from app.schemas.agent import AgentChatResponse, ToolCall
 from app.services.audit_service import write_audit_log
 
+_CONFIRM_WORDS = {"yes", "y", "confirm", "confirmed", "submit", "continue", "ok", "okay"}
+_CANCEL_WORDS = {"no", "cancel", "stop", "discard", "never mind", "nevermind"}
 
-LEAVE_LABELS = {
-    "casual_leave": "Casual Leave",
-    "sick_leave": "Sick Leave",
-    "earned_leave": "Earned Leave",
-    "comp_off": "Comp Off",
-}
+MODEL = "claude-sonnet-4-6"
 
-MONTHS = {name.lower(): number for number, name in enumerate(calendar.month_name) if name}
-MONTHS.update({name.lower(): number for number, name in enumerate(calendar.month_abbr) if name})
 
+# ---------------------------------------------------------------------------
+# Public entry point
+# ---------------------------------------------------------------------------
 
 def handle_agent_chat(db: Session, user: User, message: str) -> AgentChatResponse:
-    normalized = _normalize(message)
-    if _is_cancel(normalized):
-        return _cancel_pending_action(db, user)
-    if _is_confirm(normalized):
+    normalized = " ".join(message.strip().lower().split())
+
+    if normalized in _CONFIRM_WORDS:
         return _confirm_pending_action(db, user)
+    if normalized in _CANCEL_WORDS:
+        return _cancel_pending_action(db, user)
 
-    if "pending" in normalized and ("approval" in normalized or "leave" in normalized or "regularization" in normalized or "request" in normalized):
-        if "regularization" in normalized or "attendance" in normalized:
-            return _handle_pending_regularization_approvals(db, user)
-        return _handle_pending_approvals(db, user)
-
-    if normalized.startswith("approve"):
-        if "regularization" in normalized or "attendance" in normalized:
-            return _handle_manager_regularization_decision(db, user, normalized, "approve_regularization")
-        return _handle_manager_decision(db, user, normalized, "approve_leave_request")
-
-    if normalized.startswith("reject"):
-        if "regularization" in normalized or "attendance" in normalized:
-            return _handle_manager_regularization_decision(db, user, normalized, "reject_regularization")
-        return _handle_manager_decision(db, user, normalized, "reject_leave_request")
-
-    if "apply" in normalized and "leave" in normalized:
-        return _handle_apply_leave(db, user, normalized)
-
-    # Keywords for attendance regularization
-    reg_keywords = [
-        "regularize", "regularization", "missed", "forgot", "forget", 
-        "punch in", "punch out", "check in", "check out", 
-        "check-in", "check-out", "forgot to punch", "forgot to check"
-    ]
-    if any(k in normalized for k in reg_keywords):
-        return _handle_regularization(db, user, normalized)
-
-    if "attendance" in normalized:
-        return _handle_attendance(db, user, normalized)
-
-    if "payslip" in normalized or "payroll" in normalized or "salary" in normalized or "tax" in normalized:
-        return _handle_payslip(db, user)
-
-    if "policy" in normalized or "rules" in normalized or "wfh" in normalized or "remote" in normalized:
-        return _handle_policy_query(db, user, normalized)
-
-    if "leave request" in normalized or "my requests" in normalized:
-        return _handle_leave_requests(db, user)
-    if "how many" in normalized and ("leave" in normalized or "leaves" in normalized):
-        return _handle_leave_balance(db, user)
-
-    return AgentChatResponse(
-        reply=(
-            "I can help with leave balances, attendance summaries, leave requests, and manager "
-            "approvals in this mock HRMS. Try asking: How many leaves do I have?"
-        ),
-        requires_confirmation=False,
-        pending_action_id=None,
-        data=None,
-    )
-
-
-def _handle_leave_balance(db: Session, user: User) -> AgentChatResponse:
-    if user.role not in {"employee", "manager", "hr_admin"}:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized")
-    balances = tools.get_leave_balance(db, user)
-    if not balances:
+    settings = get_settings()
+    if not settings.anthropic_api_key:
+        local_response = _handle_local_mvp_intent(db, user, message)
+        if local_response is not None:
+            return local_response
         return AgentChatResponse(
-            reply="I could not find leave balances for your account.",
+            reply=(
+                "The AI agent requires an ANTHROPIC_API_KEY. "
+                "For this local MVP fallback, I can still help employees apply leave or submit attendance regularization. "
+                "Try: 'Apply casual leave for 2026-05-24' or 'Regularize 2026-05-14 as present because I forgot to punch in'."
+            ),
             requires_confirmation=False,
             pending_action_id=None,
-            data={"balances": []},
+            data=None,
         )
-    lines = []
-    data = []
-    for balance in balances:
-        total = Decimal(balance.total_days)
-        used = Decimal(balance.used_days)
-        remaining = total - used
-        label = LEAVE_LABELS.get(balance.leave_type, _titleize(balance.leave_type))
-        lines.append(f"{label}: {remaining:g} remaining")
-        data.append(
-            {
-                "leave_type": balance.leave_type,
-                "total_days": str(total),
-                "used_days": str(used),
-                "remaining_days": str(remaining),
-            }
-        )
-    return AgentChatResponse(
-        reply="Here is your current leave balance:\n" + "\n".join(lines),
-        requires_confirmation=False,
-        pending_action_id=None,
-        data={"balances": data},
-    )
+
+    return _run_agent_loop(db, user, message, settings.anthropic_api_key)
 
 
-def _handle_attendance(db: Session, user: User, normalized: str) -> AgentChatResponse:
-    month = _extract_month(normalized) or "2026-05"
-    summary = tools.get_attendance_summary_tool(db, user, month)
-    reply = (
-        f"Attendance for {month}:\n"
-        f"Working days: {summary['working_days']}\n"
-        f"Present: {summary['present_days']}\n"
-        f"Absent: {summary['absent_days']}\n"
-        f"Leave days: {summary['leave_days']}\n"
-        f"Late check-ins: {summary['late_days']}"
-    )
-    return AgentChatResponse(reply=reply, requires_confirmation=False, pending_action_id=None, data=summary)
-
-
-def _handle_leave_requests(db: Session, user: User) -> AgentChatResponse:
-    requests = tools.get_leave_requests(db, user)
-    if not requests:
-        return AgentChatResponse(
-            reply="You do not have any leave requests yet.",
-            requires_confirmation=False,
-            pending_action_id=None,
-            data={"items": []},
-        )
-    lines = [
-        f"#{request.id}: {_titleize(request.leave_type)} from {request.start_date} to {request.end_date} is {request.status}."
-        for request in requests[:5]
-    ]
-    return AgentChatResponse(
-        reply="Here are your recent leave requests:\n" + "\n".join(lines),
-        requires_confirmation=False,
-        pending_action_id=None,
-        data={"items": [_leave_request_data(request) for request in requests]},
-    )
-
-
-def _handle_apply_leave(db: Session, user: User, normalized: str) -> AgentChatResponse:
+def _handle_local_mvp_intent(db: Session, user: User, message: str) -> Optional[AgentChatResponse]:
+    normalized = " ".join(message.strip().lower().split())
     if user.role != "employee":
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only employees can apply for leave through the assistant",
-        )
-    leave_type = _extract_leave_type(normalized)
-    if leave_type is None:
-        return AgentChatResponse(
-            reply="Please mention the leave type: casual leave, sick leave, earned leave, or comp off.",
-            requires_confirmation=False,
-            pending_action_id=None,
-            data=None,
-        )
-    start_date, end_date = _extract_date_range(normalized)
-    if start_date is None:
-        return AgentChatResponse(
-            reply="Please mention the leave date. For example: Apply casual leave for 24 May.",
-            requires_confirmation=False,
-            pending_action_id=None,
-            data=None,
-        )
-    reason = _extract_reason(normalized)
-    balances = tools.get_leave_balance(db, user)
-    balance = next((item for item in balances if item.leave_type == leave_type), None)
-    remaining = Decimal("0")
-    if balance is not None:
-        remaining = Decimal(balance.total_days) - Decimal(balance.used_days)
+        return None
 
-    payload = {
+    if any(word in normalized for word in ["regularize", "regularization", "missed check", "forgot to punch", "wrong status"]):
+        payload = _parse_regularization_payload(normalized)
+        if payload is None:
+            return AgentChatResponse(
+                reply=(
+                    "I can submit attendance regularization locally. Please include a date and reason, for example: "
+                    "'Regularize 2026-05-14 as present because I forgot to punch in.'"
+                ),
+                requires_confirmation=False,
+                pending_action_id=None,
+                data=None,
+            )
+        pending = _create_pending_action(db, user, "apply_attendance_regularization", payload)
+        return AgentChatResponse(
+            reply=_fallback_confirmation_text("apply_attendance_regularization", payload),
+            requires_confirmation=True,
+            pending_action_id=pending.id,
+            data=payload,
+            tool_calls=[ToolCall(tool_name="apply_attendance_regularization", status="pending_confirmation")],
+        )
+
+    if "leave" in normalized and any(word in normalized for word in ["apply", "take", "request"]):
+        payload = _parse_leave_payload(normalized)
+        if payload is None:
+            return AgentChatResponse(
+                reply=(
+                    "I can apply leave locally. Please include leave type and date, for example: "
+                    "'Apply casual leave for 2026-05-24 because family work.'"
+                ),
+                requires_confirmation=False,
+                pending_action_id=None,
+                data=None,
+            )
+        pending = _create_pending_action(db, user, "apply_leave", payload)
+        return AgentChatResponse(
+            reply=_fallback_confirmation_text("apply_leave", payload),
+            requires_confirmation=True,
+            pending_action_id=pending.id,
+            data=payload,
+            tool_calls=[ToolCall(tool_name="apply_leave", status="pending_confirmation")],
+        )
+
+    return None
+
+
+def _parse_leave_payload(normalized: str) -> Optional[dict[str, str]]:
+    work_date = _extract_date(normalized)
+    if work_date is None:
+        return None
+
+    leave_type = "casual_leave"
+    if "sick" in normalized:
+        leave_type = "sick_leave"
+    elif "earned" in normalized or "annual" in normalized:
+        leave_type = "earned_leave"
+    elif "comp" in normalized:
+        leave_type = "comp_off"
+    elif "casual" in normalized:
+        leave_type = "casual_leave"
+
+    reason = _extract_reason(normalized) or "Requested via AI assistant"
+    return {
         "leave_type": leave_type,
-        "start_date": start_date.isoformat(),
-        "end_date": end_date.isoformat(),
+        "start_date": work_date.isoformat(),
+        "end_date": work_date.isoformat(),
         "reason": reason,
     }
-    pending = _create_pending_action(db, user, "apply_leave", payload)
-    reply = (
-        f"You are applying {LEAVE_LABELS[leave_type]} from {start_date.strftime('%d %b %Y')} "
-        f"to {end_date.strftime('%d %b %Y')}.\n"
-        f"You currently have {remaining:g} {LEAVE_LABELS[leave_type].lower()} available.\n"
-        f"Reason: {reason or 'Not provided'}.\n"
-        "Should I submit this leave request?"
-    )
-    return AgentChatResponse(
-        reply=reply,
-        requires_confirmation=True,
-        pending_action_id=pending.id,
-        data=payload,
-    )
 
 
-def _handle_pending_approvals(db: Session, user: User) -> AgentChatResponse:
-    if user.role != "manager":
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only managers can view pending leave approvals",
-        )
-    requests = tools.get_pending_leave_approvals(db, user)
-    if not requests:
-        return AgentChatResponse(
-            reply="There are no pending leave approvals assigned to you.",
-            requires_confirmation=False,
-            pending_action_id=None,
-            data={"items": []},
-        )
-    lines = [_manager_request_line(request) for request in requests]
-    return AgentChatResponse(
-        reply="Pending leave approvals:\n" + "\n".join(lines),
-        requires_confirmation=False,
-        pending_action_id=None,
-        data={"items": [_leave_request_data(request) for request in requests]},
-    )
-
-
-def _handle_manager_decision(
-    db: Session, user: User, normalized: str, action_type: str
-) -> AgentChatResponse:
-    if user.role != "manager":
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only managers can approve or reject leave requests",
-        )
-    requests = tools.get_pending_leave_approvals(db, user)
-    target = _find_target_request(requests, normalized)
-    if target is None:
-        return AgentChatResponse(
-            reply="I could not find a matching pending leave request assigned to you.",
-            requires_confirmation=False,
-            pending_action_id=None,
-            data={"items": [_leave_request_data(request) for request in requests]},
-        )
-    comment = _extract_reason(normalized)
-    payload = {"leave_id": target.id, "comment": comment}
-    pending = _create_pending_action(db, user, action_type, payload)
-    verb = "approve" if action_type == "approve_leave_request" else "reject"
-    reply = (
-        f"You are about to {verb} {_employee_name(target)}'s "
-        f"{_titleize(target.leave_type)} from {target.start_date} to {target.end_date}.\n"
-        f"Comment: {comment or 'Not provided'}.\n"
-        "Should I continue?"
-    )
-    return AgentChatResponse(
-        reply=reply,
-        requires_confirmation=True,
-        pending_action_id=pending.id,
-        data=payload,
-    )
-
-
-def _handle_regularization(db: Session, user: User, normalized: str) -> AgentChatResponse:
-    if user.role != "employee":
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only employees can apply for regularization through the assistant",
-        )
-
-    dates = _extract_dates(normalized)
-    if not dates:
-        return AgentChatResponse(
-            reply="Please mention the date you want to regularize. For example: I missed my check-in on 14 May.",
-            requires_confirmation=False,
-            pending_action_id=None,
-            data=None,
-        )
-    target_date = dates[0]
+def _parse_regularization_payload(normalized: str) -> Optional[dict[str, str]]:
+    work_date = _extract_date(normalized)
+    if work_date is None:
+        return None
 
     issue_type = "missing_checkin"
-    if "checkout" in normalized or "check-out" in normalized:
+    if "checkout" in normalized or "check-out" in normalized or "check out" in normalized:
         issue_type = "missing_checkout"
-    elif "status" in normalized or "wrong" in normalized:
+    elif "wrong status" in normalized:
         issue_type = "wrong_status"
 
     requested_status = "present"
-    if "wfh" in normalized:
+    if "wfh" in normalized or "work from home" in normalized:
         requested_status = "wfh"
-    elif "half day" in normalized or "halfday" in normalized:
+    elif "half day" in normalized or "half-day" in normalized:
         requested_status = "half_day"
 
-    reason = _extract_reason(normalized) or "Worked from office but forgot to punch in"
-
-    # Check existing attendance record
-    record = tools.get_attendance_record(db, user, target_date)
-
-    payload = {
-        "work_date": target_date.isoformat(),
+    reason = _extract_reason(normalized) or "Requested via AI assistant"
+    return {
+        "work_date": work_date.isoformat(),
         "issue_type": issue_type,
         "requested_status": requested_status,
         "reason": reason,
     }
 
-    pending = _create_pending_action(db, user, "apply_regularization", payload)
 
-    manager_name = user.manager.name if user.manager else "your manager"
-    reply = (
-        f"Goal:\nRegularize {issue_type.replace('_', ' ')} for {target_date.strftime('%d %b %Y')}.\n\n"
-        f"Plan:\n1. Identify date and issue type.\n2. Check attendance record.\n3. Prepare regularization request.\n4. Ask for human approval.\n5. Submit request to manager after confirmation.\n\n"
-        f"Human approval:\n"
-        f"Date: {target_date.strftime('%d %b %Y')}\n"
-        f"Issue: {issue_type.replace('_', ' ').capitalize()}\n"
-        f"Requested status: {requested_status.capitalize()}\n"
-        f"Reason: {reason}\n"
-        f"Approver: {manager_name}\n\n"
-        "Should I submit this regularization request?"
+def _extract_date(normalized: str) -> Optional[date]:
+    iso_match = re.search(r"\b(20\d{2}-\d{2}-\d{2})\b", normalized)
+    if iso_match:
+        return date.fromisoformat(iso_match.group(1))
+
+    month_names = {
+        "jan": 1, "january": 1,
+        "feb": 2, "february": 2,
+        "mar": 3, "march": 3,
+        "apr": 4, "april": 4,
+        "may": 5,
+        "jun": 6, "june": 6,
+        "jul": 7, "july": 7,
+        "aug": 8, "august": 8,
+        "sep": 9, "sept": 9, "september": 9,
+        "oct": 10, "october": 10,
+        "nov": 11, "november": 11,
+        "dec": 12, "december": 12,
+    }
+    text_match = re.search(r"\b(\d{1,2})(?:st|nd|rd|th)?\s+([a-z]+)(?:\s+(20\d{2}))?\b", normalized)
+    if text_match:
+        day = int(text_match.group(1))
+        month = month_names.get(text_match.group(2))
+        year = int(text_match.group(3) or "2026")
+        if month:
+            return date(year, month, day)
+    return None
+
+
+def _extract_reason(normalized: str) -> Optional[str]:
+    for marker in [" because ", " due to ", " reason "]:
+        if marker in normalized:
+            return normalized.split(marker, 1)[1].strip(" .")
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Core agent loop
+# ---------------------------------------------------------------------------
+
+def _run_agent_loop(db: Session, user: User, message: str, api_key: str) -> AgentChatResponse:
+    client = anthropic.Anthropic(api_key=api_key)
+    tool_defs = get_tools_for_user(user)
+    system = _build_system_prompt(user)
+    messages: list[dict[str, Any]] = [{"role": "user", "content": message}]
+    tool_calls_log: list[ToolCall] = []
+
+    # ── First Claude call ──────────────────────────────────────────────────
+    response = client.messages.create(
+        model=MODEL,
+        max_tokens=1024,
+        system=system,
+        tools=tool_defs,
+        messages=messages,
     )
 
-    return AgentChatResponse(
-        reply=reply,
-        requires_confirmation=True,
-        pending_action_id=pending.id,
-        data=payload,
-    )
-
-
-def _handle_pending_regularization_approvals(db: Session, user: User) -> AgentChatResponse:
-    if user.role != "manager":
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only managers can view pending regularization approvals",
-        )
-    requests = tools.get_pending_regularization_requests(db, user)
-    if not requests:
+    # Pure text — no tools needed
+    if response.stop_reason == "end_turn":
+        text = _extract_text(response.content)
         return AgentChatResponse(
-            reply="There are no pending attendance regularization requests assigned to you.",
+            reply=text or "I can help with HR tasks. Try asking about your leave balance, attendance, or company policies.",
             requires_confirmation=False,
             pending_action_id=None,
-            data={"items": []},
+            data=None,
+            tool_calls=tool_calls_log,
         )
-    lines = [_manager_regularization_request_line(request) for request in requests]
+
+    # ── Process tool calls ─────────────────────────────────────────────────
+    tool_results: list[dict[str, Any]] = []
+
+    for block in response.content:
+        if not hasattr(block, "type") or block.type != "tool_use":
+            continue
+
+        tool_name: str = block.name
+        tool_input: dict = block.input
+
+        # Write op → pause for human confirmation
+        if tool_name in WRITE_TOOLS:
+            pending = _create_pending_action(db, user, tool_name, tool_input)
+            tool_calls_log.append(ToolCall(tool_name=tool_name, status="pending_confirmation"))
+
+            # Ask Claude to compose a friendly confirmation message
+            confirm_reply = _ask_for_confirmation_text(
+                client, system, messages, response.content, block, tool_input
+            )
+            return AgentChatResponse(
+                reply=confirm_reply,
+                requires_confirmation=True,
+                pending_action_id=pending.id,
+                data=tool_input,
+                tool_calls=tool_calls_log,
+            )
+
+        # Read op → execute immediately
+        result = execute_tool(tool_name, tool_input, db, user)
+        tool_calls_log.append(ToolCall(tool_name=tool_name, status="success"))
+        tool_results.append({
+            "type": "tool_result",
+            "tool_use_id": block.id,
+            "content": json.dumps(result, default=str),
+        })
+
+    if not tool_results:
+        return AgentChatResponse(
+            reply="I processed your request but had no data to return.",
+            requires_confirmation=False,
+            pending_action_id=None,
+            data=None,
+            tool_calls=tool_calls_log,
+        )
+
+    # ── Second Claude call with tool results ───────────────────────────────
+    messages = messages + [
+        {"role": "assistant", "content": response.content},
+        {"role": "user", "content": tool_results},
+    ]
+
+    final = client.messages.create(
+        model=MODEL,
+        max_tokens=1024,
+        system=system,
+        tools=tool_defs,
+        messages=messages,
+    )
+
+    text = _extract_text(final.content) or "Here is the information you requested."
+
+    try:
+        first_result_data = json.loads(tool_results[0]["content"]) if tool_results else None
+    except (json.JSONDecodeError, KeyError):
+        first_result_data = None
+
     return AgentChatResponse(
-        reply="Pending regularization requests:\n" + "\n".join(lines),
+        reply=text,
         requires_confirmation=False,
         pending_action_id=None,
-        data={"items": [_regularization_request_data(request) for request in requests]},
+        data=first_result_data,
+        tool_calls=tool_calls_log,
     )
 
 
-def _handle_manager_regularization_decision(
-    db: Session, user: User, normalized: str, action_type: str
-) -> AgentChatResponse:
-    if user.role != "manager":
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only managers can approve or reject regularization requests",
+# ---------------------------------------------------------------------------
+# Confirmation helpers
+# ---------------------------------------------------------------------------
+
+def _ask_for_confirmation_text(
+    client: anthropic.Anthropic,
+    system: str,
+    prior_messages: list,
+    assistant_content: list,
+    write_block: Any,
+    tool_input: dict,
+) -> str:
+    """Send a follow-up to Claude to produce a human-readable confirmation prompt."""
+    try:
+        confirm_resp = client.messages.create(
+            model=MODEL,
+            max_tokens=512,
+            system=system,
+            messages=prior_messages + [
+                {"role": "assistant", "content": assistant_content},
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": write_block.id,
+                            "content": json.dumps({"status": "awaiting_confirmation", "details": tool_input}),
+                        }
+                    ],
+                },
+                {
+                    "role": "user",
+                    "content": (
+                        "Summarise clearly what action you are about to take, "
+                        "show the key details, then ask the user to reply 'yes' to confirm or 'no' to cancel."
+                    ),
+                },
+            ],
         )
-    requests = tools.get_pending_regularization_requests(db, user)
-    target = _find_target_regularization_request(requests, normalized)
-    if target is None:
-        return AgentChatResponse(
-            reply="I could not find a matching pending regularization request assigned to you.",
-            requires_confirmation=False,
-            pending_action_id=None,
-            data={"items": [_regularization_request_data(request) for request in requests]},
-        )
-    comment = _extract_reason(normalized)
-    payload = {"request_id": target.id, "comment": comment}
-    pending = _create_pending_action(db, user, action_type, payload)
-    verb = "approve" if action_type == "approve_regularization" else "reject"
-    reply = (
-        f"You are about to {verb} {target.employee.name if target.employee else 'Employee'}'s "
-        f"regularization for {target.work_date}.\n"
-        f"Comment: {comment or 'Not provided'}.\n"
-        "Should I continue?"
-    )
-    return AgentChatResponse(
-        reply=reply,
-        requires_confirmation=True,
-        pending_action_id=pending.id,
-        data=payload,
-    )
+        return _extract_text(confirm_resp.content) or _fallback_confirmation_text(write_block.name, tool_input)
+    except Exception:
+        return _fallback_confirmation_text(write_block.name, tool_input)
 
+
+def _fallback_confirmation_text(tool_name: str, tool_input: dict) -> str:
+    label = tool_name.replace("_", " ").capitalize()
+    details = ", ".join(f"{k}: {v}" for k, v in tool_input.items())
+    return f"I am about to **{label}** with the following details:\n{details}\n\nReply **yes** to confirm or **no** to cancel."
+
+
+# ---------------------------------------------------------------------------
+# Pending action helpers (confirm / cancel)
+# ---------------------------------------------------------------------------
 
 def _confirm_pending_action(db: Session, user: User) -> AgentChatResponse:
     pending = _get_latest_pending_action(db, user)
@@ -402,65 +358,29 @@ def _confirm_pending_action(db: Session, user: User) -> AgentChatResponse:
             pending_action_id=None,
             data=None,
         )
+
     payload = json.loads(pending.payload_json)
     pending.status = "confirmed"
     db.flush()
-    if pending.action_type == "apply_leave":
-        request_payload = LeaveApplyRequest(**payload)
-        result = tools.apply_leave(db, user, request_payload)
-        _complete_pending_action(db, pending)
-        return AgentChatResponse(
-            reply=f"Submitted leave request #{result.id}. It is now pending manager approval.",
-            requires_confirmation=False,
-            pending_action_id=None,
-            data={"leave_request": _leave_request_data(result)},
-        )
-    if pending.action_type == "apply_regularization":
-        request_payload = AttendanceRegularizationApplyRequest(**payload)
-        result = tools.create_attendance_regularization_request(db, user, request_payload)
-        _complete_pending_action(db, pending)
-        return AgentChatResponse(
-            reply=f"Submitted regularization request #{result.id}. It is now pending manager approval.",
-            requires_confirmation=False,
-            pending_action_id=None,
-            data={"regularization_request": _regularization_request_data(result)},
-        )
-    if pending.action_type in {"approve_leave_request", "reject_leave_request"}:
-        if user.role != "manager":
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Manager role required")
-        request = db.get(LeaveRequest, int(payload["leave_id"]))
-        if request is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Leave request not found")
-        if pending.action_type == "approve_leave_request":
-            result = tools.approve_leave_request_tool(db, user, request, payload.get("comment"))
-            reply = f"Approved leave request #{result.id}."
-        else:
-            result = tools.reject_leave_request_tool(db, user, request, payload.get("comment"))
-            reply = f"Rejected leave request #{result.id}."
-        _complete_pending_action(db, pending)
-        return AgentChatResponse(
-            reply=reply,
-            requires_confirmation=False,
-            pending_action_id=None,
-            data={"leave_request": _leave_request_data(result)},
-        )
-    if pending.action_type in {"approve_regularization", "reject_regularization"}:
-        if user.role != "manager":
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Manager role required")
-        if pending.action_type == "approve_regularization":
-            result = tools.approve_regularization_request_tool(db, user, int(payload["request_id"]), payload.get("comment"))
-            reply = f"Approved regularization request #{result.id}."
-        else:
-            result = tools.reject_regularization_request_tool(db, user, int(payload["request_id"]), payload.get("comment"))
-            reply = f"Rejected regularization request #{result.id}."
-        _complete_pending_action(db, pending)
-        return AgentChatResponse(
-            reply=reply,
-            requires_confirmation=False,
-            pending_action_id=None,
-            data={"regularization_request": _regularization_request_data(result)},
-        )
-    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unsupported pending action")
+
+    result = execute_confirmed_write(pending.action_type, payload, db, user)
+    _complete_pending_action(db, pending)
+    write_audit_log(
+        db,
+        actor=user,
+        action=f"agent_confirmed_{pending.action_type}",
+        target_type="pending_action",
+        target_id=pending.id,
+        details=payload,
+    )
+
+    return AgentChatResponse(
+        reply=result["reply"],
+        requires_confirmation=False,
+        pending_action_id=None,
+        data=result.get("data"),
+        tool_calls=[ToolCall(tool_name=pending.action_type, status="success")],
+    )
 
 
 def _cancel_pending_action(db: Session, user: User) -> AgentChatResponse:
@@ -483,19 +403,18 @@ def _cancel_pending_action(db: Session, user: User) -> AgentChatResponse:
     )
     db.commit()
     return AgentChatResponse(
-        reply="Cancelled the pending action. No changes were made.",
+        reply="Action cancelled. No changes were made.",
         requires_confirmation=False,
         pending_action_id=None,
         data={"pending_action_id": pending.id},
     )
 
 
-def _create_pending_action(
-    db: Session, user: User, action_type: str, payload: dict[str, Any]
-) -> PendingAction:
+def _create_pending_action(db: Session, user: User, action_type: str, payload: dict) -> PendingAction:
     existing = _get_latest_pending_action(db, user)
     if existing is not None:
         existing.status = "cancelled"
+
     pending = PendingAction(
         user_id=user.id,
         action_type=action_type,
@@ -524,6 +443,7 @@ def _complete_pending_action(db: Session, pending: PendingAction) -> None:
 
 
 def _get_latest_pending_action(db: Session, user: User) -> Optional[PendingAction]:
+    from sqlalchemy import select
     return db.scalar(
         select(PendingAction)
         .where(PendingAction.user_id == user.id, PendingAction.status == "pending")
@@ -531,255 +451,28 @@ def _get_latest_pending_action(db: Session, user: User) -> Optional[PendingActio
     )
 
 
-def _extract_leave_type(normalized: str) -> Optional[str]:
-    if "casual" in normalized:
-        return "casual_leave"
-    if "sick" in normalized:
-        return "sick_leave"
-    if "earned" in normalized:
-        return "earned_leave"
-    if "comp off" in normalized or "compoff" in normalized:
-        return "comp_off"
-    return None
+# ---------------------------------------------------------------------------
+# Utilities
+# ---------------------------------------------------------------------------
 
-
-def _extract_date_range(normalized: str) -> tuple[Optional[date], Optional[date]]:
-    dates = _extract_dates(normalized)
-    if not dates:
-        return None, None
-    if len(dates) == 1:
-        return dates[0], dates[0]
-    return dates[0], dates[1]
-
-
-def _extract_dates(normalized: str) -> list[date]:
-    month_pattern = r"(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)"
-    day_pattern = r"(\d{1,2})(?:st|nd|rd|th)?"
-    year_pattern = r"(?:\s+(\d{4}))?"
-
-    # Pattern 1: 15th May 2026
-    pattern1 = f"{day_pattern}\\s+{month_pattern}{year_pattern}"
-    # Pattern 2: May 15th 2026
-    pattern2 = f"{month_pattern}\\s+{day_pattern}{year_pattern}"
-
-    dates = []
-    
-    # Try Pattern 1
-    for d, m, y in re.findall(pattern1, normalized):
-        month_abbr = m[:3].lower()
-        month = MONTHS.get(month_abbr)
-        if month_abbr == "may": month = 5
-        year = int(y) if y else 2026
-        try:
-            dates.append(date(year, month, int(d)))
-        except (TypeError, ValueError):
-            continue
-
-    # Try Pattern 2
-    for m, d, y in re.findall(pattern2, normalized):
-        month_abbr = m[:3].lower()
-        month = MONTHS.get(month_abbr)
-        if month_abbr == "may": month = 5
-        year = int(y) if y else 2026
-        # Avoid duplicates if both patterns match (though unlikely with whitespace)
-        new_date = None
-        try:
-            new_date = date(year, month, int(d))
-        except (TypeError, ValueError):
-            continue
-        if new_date and new_date not in dates:
-            dates.append(new_date)
-
-    return dates
-
-
-def _extract_month(normalized: str) -> Optional[str]:
-    match = re.search(
-        r"(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+(\d{4})",
-        normalized,
-    )
-    if not match:
-        return None
-    month_text, year_text = match.groups()
-    month = MONTHS.get(month_text[:3]) if month_text[:3] != "may" else 5
-    return f"{int(year_text):04d}-{month:02d}"
-
-
-def _extract_reason(normalized: str) -> Optional[str]:
-    match = re.search(r"\bbecause\b\s+(.+)$", normalized)
-    if not match:
-        return None
-    reason = match.group(1).strip()
-    return reason[:1].upper() + reason[1:] if reason else None
-
-
-def _find_target_request(requests: list[LeaveRequest], normalized: str) -> Optional[LeaveRequest]:
-    id_match = re.search(r"#?(\d+)", normalized)
-    if id_match:
-        target_id = int(id_match.group(1))
-        for request in requests:
-            if request.id == target_id:
-                return request
-    for request in requests:
-        name = _employee_name(request).lower()
-        first_name = name.split()[0] if name else ""
-        if first_name and first_name in normalized:
-            return request
-    return requests[0] if len(requests) == 1 else None
-
-
-def _find_target_regularization_request(
-    requests: list[AttendanceRegularizationRequest], normalized: str
-) -> Optional[AttendanceRegularizationRequest]:
-    id_match = re.search(r"#?(\d+)", normalized)
-    if id_match:
-        target_id = int(id_match.group(1))
-        for request in requests:
-            if request.id == target_id:
-                return request
-    for request in requests:
-        name = (request.employee.name if request.employee else "").lower()
-        first_name = name.split()[0] if name else ""
-        if first_name and first_name in normalized:
-            return request
-    return requests[0] if len(requests) == 1 else None
-
-
-def _manager_regularization_request_line(request: AttendanceRegularizationRequest) -> str:
-    emp_name = request.employee.name if request.employee else f"Employee {request.employee_id}"
+def _build_system_prompt(user: User) -> str:
     return (
-        f"#{request.id}: {emp_name} requested {request.requested_status} for {request.work_date} "
-        f"({request.issue_type.replace('_', ' ')})."
+        f"You are an intelligent HR assistant for an HRMS platform.\n"
+        f"The logged-in user is **{user.name}** with role **{user.role}**.\n\n"
+        "CRITICAL RULE: You MUST call a tool before responding to any HR data request. "
+        "Never say you cannot retrieve data — always check your available tools first and call the most relevant one. "
+        "If the user asks about employees, call search_employees. "
+        "If they ask about a specific employee's profile, call get_employee_profile. "
+        "Only say you cannot help if NO tool exists for the request.\n\n"
+        "Guidelines:\n"
+        "- Always use tools to answer questions — never make up or refuse HR data requests.\n"
+        "- For write operations (applying leave, approvals, regularizations, hiring), "
+        "always call the relevant tool. The system will automatically pause for human confirmation.\n"
+        "- Be concise, professional, and friendly.\n"
+        "- Present data clearly — use bullet points or short sentences.\n"
+        "- Today's date context: the platform is operating in 2026."
     )
 
 
-def _regularization_request_data(request: AttendanceRegularizationRequest) -> dict[str, Any]:
-    return {
-        "id": request.id,
-        "employee_id": request.employee_id,
-        "employee_name": request.employee.name if request.employee else f"Employee {request.employee_id}",
-        "manager_id": request.manager_id,
-        "attendance_record_id": request.attendance_record_id,
-        "work_date": request.work_date.isoformat(),
-        "issue_type": request.issue_type,
-        "requested_status": request.requested_status,
-        "reason": request.reason,
-        "status": request.status,
-        "manager_comment": request.manager_comment,
-        "created_at": request.created_at.isoformat() if request.created_at else None,
-    }
-
-
-def _manager_request_line(request: LeaveRequest) -> str:
-    return (
-        f"#{request.id}: {_employee_name(request)} requested {_titleize(request.leave_type)} "
-        f"from {request.start_date} to {request.end_date}."
-    )
-
-
-def _handle_payslip(db: Session, user: User) -> AgentChatResponse:
-    payslip = tools.get_my_payslip_summary_tool(db, user)
-    if not payslip:
-        return AgentChatResponse(
-            reply="I could not find any payslip records for your account.",
-            requires_confirmation=False,
-            pending_action_id=None,
-            data=None,
-        )
-    
-    reply = (
-        f"Here is a summary of your latest payslip ({payslip.month}):\n"
-        f"Earnings: {payslip.earnings:g}\n"
-        f"Deductions: {payslip.deductions:g}\n"
-        f"Tax: {payslip.tax:g}\n"
-        f"Net Pay: {payslip.net_pay:g}"
-    )
-    return AgentChatResponse(
-        reply=reply,
-        requires_confirmation=False,
-        pending_action_id=None,
-        data={
-            "month": payslip.month,
-            "earnings": str(payslip.earnings),
-            "deductions": str(payslip.deductions),
-            "tax": str(payslip.tax),
-            "net_pay": str(payslip.net_pay),
-        },
-    )
-
-
-def _handle_policy_query(db: Session, user: User, normalized: str) -> AgentChatResponse:
-    # Extract potential policy keywords
-    query = normalized.replace("?", "").replace(".", "").strip()
-    
-    # Remove common filler phrases
-    fillers = [
-        "what is", "what are", "show me", "tell me about", "our", "the", 
-        "policy on", "policy regarding", "policy for", "rules for",
-        "regulations for", "information about", "policy"
-    ]
-    for filler in fillers:
-        query = query.replace(filler, "")
-    
-    query = query.strip()
-    
-    # If the user just asked "what is the policy", query might be empty
-    search_term = query if query else "policy"
-    
-    policies = tools.search_hr_policies_tool(db, search_term)
-    if not policies:
-        return AgentChatResponse(
-            reply="I couldn't find a specific policy regarding your query. Please check the HR portal or contact HR.",
-            requires_confirmation=False,
-            pending_action_id=None,
-            data=None,
-        )
-    
-    policy = policies[0]
-    reply = f"**{policy.title}**\n\n{policy.content}"
-    if len(policies) > 1:
-        others = ", ".join([p.title for p in policies[1:3]])
-        reply += f"\n\n(See also: {others})"
-        
-    return AgentChatResponse(
-        reply=reply,
-        requires_confirmation=False,
-        pending_action_id=None,
-        data={"items": [{"title": p.title, "content": p.content} for p in policies]},
-    )
-
-
-def _leave_request_data(request: LeaveRequest) -> dict[str, Any]:
-    return {
-        "id": request.id,
-        "employee_id": request.employee_id,
-        "employee_name": _employee_name(request),
-        "manager_id": request.manager_id,
-        "leave_type": request.leave_type,
-        "start_date": request.start_date.isoformat(),
-        "end_date": request.end_date.isoformat(),
-        "days": str(request.days),
-        "reason": request.reason,
-        "status": request.status,
-        "created_at": request.created_at.isoformat() if request.created_at else None,
-    }
-
-
-def _employee_name(request: LeaveRequest) -> str:
-    return request.employee.name if request.employee else f"Employee {request.employee_id}"
-
-
-def _titleize(value: str) -> str:
-    return value.replace("_", " ").title()
-
-
-def _normalize(message: str) -> str:
-    return " ".join(message.strip().lower().replace("’", "'").split())
-
-
-def _is_confirm(normalized: str) -> bool:
-    return normalized in {"yes", "y", "confirm", "confirmed", "submit", "continue", "ok", "okay"}
-
-
-def _is_cancel(normalized: str) -> bool:
-    return normalized in {"no", "cancel", "stop", "discard", "never mind", "nevermind"}
+def _extract_text(content: list) -> str:
+    return next((block.text for block in content if hasattr(block, "text")), "")

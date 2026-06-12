@@ -5,7 +5,7 @@ from decimal import Decimal
 from typing import Optional
 
 from fastapi import HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import select, func
 from sqlalchemy.orm import Session
 
 from app.models.leave_balance import LeaveBalance
@@ -106,6 +106,30 @@ def get_pending_leave_requests_for_manager(
     if manager.role == "manager":
         query = query.where(LeaveRequest.manager_id == manager.id)
     return list(db.scalars(query.order_by(LeaveRequest.created_at.asc())))
+
+def get_team_leave_report(db: Session, manager: User) -> dict[str, Any]:
+    if manager.role not in ["manager", "hr_admin"]:
+        raise HTTPException(status_code=403, detail="Not authorized")
+        
+    query = select(User)
+    if manager.role == "manager":
+        query = query.where(User.manager_id == manager.id)
+        
+    team_members = db.scalars(query).all()
+    
+    team_reports = []
+    for member in team_members:
+        pending = db.scalar(select(func.count(LeaveRequest.id)).where(LeaveRequest.employee_id == member.id, LeaveRequest.status == "pending"))
+        active = db.scalar(select(func.count(LeaveRequest.id)).where(LeaveRequest.employee_id == member.id, LeaveRequest.status == "approved"))
+        
+        team_reports.append({
+            "employee_id": member.id,
+            "employee_name": member.name,
+            "active_leaves": active or 0,
+            "pending_leaves": pending or 0
+        })
+        
+    return {"team_reports": team_reports}
 
 
 def _get_manageable_leave_request(

@@ -13,6 +13,34 @@ class AttendanceSummaryResponse(BaseModel):
     leave_days: int
     holiday_days: int
     late_days: int
+    wfh_days: int = 0
+    overtime_hours: float = 0.0
+    comp_off_days: int = 0
+
+class TeamAttendanceSummaryItem(BaseModel):
+    employee_id: int
+    employee_name: str
+    summary: AttendanceSummaryResponse
+
+class TeamAttendanceSummaryResponse(BaseModel):
+    month: str
+    team_summaries: List[TeamAttendanceSummaryItem]
+
+class AttendanceRecordResponse(BaseModel):
+    id: int
+    user_id: int
+    work_date: date
+    status: str
+    check_in: Optional[str] = None
+    check_out: Optional[str] = None
+    is_late: bool = False
+    shift_id: Optional[int] = None
+    overtime_hours: float = 0.0
+    is_wfh: bool = False
+    comp_off_earned: bool = False
+
+    class Config:
+        from_attributes = True
 
 
 class AttendanceRegularizationApplyRequest(BaseModel):

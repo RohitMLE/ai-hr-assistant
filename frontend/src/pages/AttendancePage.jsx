@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { getAttendanceSummary } from '../api/hrms';
+import { getAttendanceSummary, clockIn, clockOut } from '../api/modules/attendance';
 import { getApiError } from '../api/client';
 import Alert from '../components/Alert';
 import Loading from '../components/Loading';
@@ -20,6 +20,26 @@ export default function AttendancePage() {
       setError(getApiError(err, 'Unable to load attendance summary.'));
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleClockIn = async () => {
+    try {
+      await clockIn();
+      alert('Clocked in successfully');
+      load(month);
+    } catch (err) {
+      alert(getApiError(err, 'Failed to clock in'));
+    }
+  };
+
+  const handleClockOut = async () => {
+    try {
+      await clockOut();
+      alert('Clocked out successfully');
+      load(month);
+    } catch (err) {
+      alert(getApiError(err, 'Failed to clock out'));
     }
   };
 
@@ -63,6 +83,17 @@ export default function AttendancePage() {
         </form>
       </div>
 
+      <div className="mt-6 panel p-5 flex items-center justify-between border-l-4 border-brand-500">
+        <div>
+          <h2 className="text-lg font-bold text-ink-900">Today's Attendance</h2>
+          <p className="text-sm text-ink-500">Punch in and out for your daily shift.</p>
+        </div>
+        <div className="flex gap-4">
+          <button className="btn-primary" onClick={handleClockIn}>Clock In</button>
+          <button className="btn-outline" onClick={handleClockOut}>Clock Out</button>
+        </div>
+      </div>
+
       <div className="mt-6">
         {error ? <Alert>{error}</Alert> : null}
         {loading ? (
@@ -72,7 +103,9 @@ export default function AttendancePage() {
             <AttendanceMetric label="total_days" value={totalDays} />
             <AttendanceMetric label="present_days" value={summary.present_days} />
             <AttendanceMetric label="absent_days" value={summary.absent_days} />
-            <AttendanceMetric label="work_from_home_days" value={0} />
+            <AttendanceMetric label="work_from_home_days" value={summary.wfh_days || 0} />
+            <AttendanceMetric label="overtime_hours" value={summary.overtime_hours || 0} />
+            <AttendanceMetric label="comp_off_days" value={summary.comp_off_days || 0} />
             <AttendanceMetric label="leave_days" value={summary.leave_days} />
             <AttendanceMetric label="late_checkins" value={summary.late_days} />
             <AttendanceMetric label="regularization_required" value={regularizationRequired} />

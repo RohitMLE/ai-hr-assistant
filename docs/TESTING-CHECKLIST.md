@@ -170,3 +170,47 @@ Use this checklist when the MVP implementation begins. It covers backend, fronte
 - Verify assistant refuses unauthorized access.
 - Verify the product clearly remains a mock Darwinbox-like HRMS POC.
 
+## 8. HRMS Expansion Test Rules
+
+Use these rules for every new HRMS module after Phase 1.
+
+- API tests cover list, create, detail, update, status transition, invalid payload, not found, and forbidden cases.
+- Permission tests cover employee, manager/department manager, HR/admin owner roles, and unrelated users.
+- Workflow tests verify legal status transitions and reject skipped or repeated approvals.
+- Frontend tests cover loading, empty, error, success, validation, role-hidden controls, and unauthorized route access.
+- Audit tests verify sensitive reads/writes and approvals create usable audit records without storing unnecessary sensitive payloads.
+- Seed tests verify mock fixtures are deterministic and do not imply real Darwinbox data.
+
+## 9. Phase 1 Core HR Tests To Add First
+
+- Run `PYTHONPYCACHEPREFIX=/tmp/ai-hr-pycache backend/.venv/bin/python backend/scripts/phase1_smoke.py` after migrations or Phase 1 route changes.
+- HR admin can create an employee with department, designation, work location, employment type, manager, joining date, and contact fields.
+- Employee code generation is deterministic and unique.
+- HR admin can update employee master fields.
+- Manager can view only direct-report detail, documents, emergency contacts, and job history.
+- Manager cannot view unrelated employee sensitive detail.
+- Employee can view own allowed subresources.
+- Employee cannot verify documents or edit restricted profile fields.
+- Bank details are visible only to the employee and HR admin.
+- Candidate-to-employee conversion creates one employee record, links department data correctly, and cannot duplicate an existing employee.
+- Core HR writes and candidate conversion create audit logs.
+
+## 10. Future Module Test Matrix
+
+| Module | Required Workflow Tests |
+| --- | --- |
+| Onboarding | Accepted candidate creates onboarding case; checklist completion changes status; document rejection blocks completion |
+| Attendance | Clock/record summary is correct; regularization approval updates summary; manager cannot approve unrelated correction |
+| Leave | Balance validation; approval/rejection transitions; payroll-impact metadata after approval |
+| Payroll | Payroll run uses locked inputs; payslip is visible only to owner/authorized payroll roles; approved run cannot be silently changed |
+| Travel & Expense | Travel approval gates expense claim; finance verification gates reimbursement; attachment metadata validation |
+| Performance | Goal creation, self review, manager review, final rating, and locked cycle behavior |
+| Learning | Course assignment, progress update, completion, certificate metadata validation |
+| Engagement | Survey/poll visibility, one response per user, anonymous result handling if enabled |
+| Rewards | Recognition creation, points ledger entry, no self-award where disallowed |
+| Assets | Assignment, return, damage status, employee asset visibility |
+| Helpdesk | Ticket create, assign, comment, resolve, SLA state |
+| Compliance | Policy publish, acknowledgment, report visibility, inactive policy hiding |
+| Workforce Planning | Department plan creation, approval, budget/headcount validation |
+| Analytics | Counts match source records and respect role filters |
+| Exit | Resignation, approval, clearance tasks, asset return, final settlement readiness |

@@ -59,6 +59,7 @@ class LeaveRequestResponse(BaseModel):
     reviewed_by_id: Optional[int]
     review_comment: Optional[str]
     reviewed_at: Optional[datetime]
+    is_loss_of_pay: bool = False
     created_at: datetime
 
     model_config = {"from_attributes": True}
@@ -66,3 +67,12 @@ class LeaveRequestResponse(BaseModel):
 
 class LeaveRequestsResponse(BaseModel):
     items: list[LeaveRequestResponse]
+
+class TeamLeaveReportItem(BaseModel):
+    employee_id: int
+    employee_name: str
+    active_leaves: int
+    pending_leaves: int
+
+class TeamLeaveReportResponse(BaseModel):
+    team_reports: list[TeamLeaveReportItem]

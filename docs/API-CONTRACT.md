@@ -361,7 +361,66 @@ Allowed for HR admin.
 
 Returns assistant tool-call audit logs.
 
-## 11. Role Matrix
+## 11. Active Modular API Areas
+
+The active FastAPI app includes routers from `backend/app/api/v1`. New work should add one router per HRMS module and include it from `backend/app/api/v1/__init__.py`.
+
+Current implemented or partially implemented areas:
+
+| Area | Active Prefix | Notes |
+| --- | --- | --- |
+| Auth | `/api/v1/auth` | Login and current user. |
+| Employees | `/api/v1/employees` | Core HR employee master and sensitive subresources. |
+| Org | `/api/v1/org` | Departments, designations, and hierarchy reference data. |
+| Recruitment | `/api/v1/recruitment` | Dashboard and candidate-to-employee conversion. |
+| Onboarding | `/api/v1/onboarding` | Cases, checklist tasks, dashboard, and task status updates. |
+| Attendance | `/api/v1/attendance` | Summary and regularization workflows. |
+| Leave | `/api/v1/leave` | Balances, requests, and manager decisions. |
+| Payroll | `/api/v1/payroll` | Payslip summary workflows. |
+| Compliance | `/api/v1/compliance` | Policy/compliance workflows. |
+| Audit | `/api/v1/audit` | HR admin audit log access. |
+| Agent | `/api/v1/agent` | Controlled assistant chat. |
+
+Legacy route files or endpoint names should not be expanded. Prefer the modular prefixes above and update callers incrementally when contracts change.
+
+## 12. HRMS Expansion Endpoint Map
+
+Use REST APIs with versioned module prefixes. Each write, approval, conversion, payroll-facing action, and sensitive HR read should validate permissions on the backend and emit an audit log where appropriate.
+
+| Module | Endpoint Family | Key Endpoints |
+| --- | --- | --- |
+| Core HR | `/api/v1/employees` | `GET /`, `POST /`, `GET /{id}`, `PATCH /{id}`, document/bank/contact/job-history subresources |
+| Org | `/api/v1/org` | `GET /hierarchy`, future departments/designations CRUD |
+| Recruitment | `/api/v1/recruitment` | Jobs, candidates, interviews, offers, candidate hire conversion |
+| Onboarding | `/api/v1/onboarding` | Cases, checklist tasks, document verification, policy acknowledgments |
+| Attendance | `/api/v1/attendance` | My/team summary, clock records, regularization, shift/holiday references |
+| Leave | `/api/v1/leave` | Types, balances, requests, approvals, comp-off, encashment |
+| Payroll | `/api/v1/payroll` | Salary structures, runs, payslips, approvals, full-and-final settlement |
+| Travel | `/api/v1/travel-requests` | Travel request creation, approval, status tracking |
+| Expense | `/api/v1/expense-claims` | Claim creation, bill attachment metadata, manager approval, finance verification |
+| Performance | `/api/v1/performance` | Goals, cycles, self reviews, manager reviews, feedback |
+| Learning | `/api/v1/learning` | Courses, assignments, progress, certifications, skills |
+| Engagement | `/api/v1/engagement` | Announcements, surveys, polls, responses |
+| Rewards | `/api/v1/rewards` | Recognition feed, badges, points history |
+| Assets | `/api/v1/assets` | Inventory, assignment, return, damage status |
+| Helpdesk | `/api/v1/helpdesk` | Tickets, comments, SLA status, assignment |
+| Compliance | `/api/v1/compliance` and `/api/v1/policies` | Policies, acknowledgments, checklists |
+| Workforce Planning | `/api/v1/workforce-planning` | Headcount plans, budgets, skill gaps, forecasts |
+| Analytics | `/api/v1/analytics` | Department counts, trends, funnels, cost summaries |
+| Exit | `/api/v1/exits` | Resignation, approval, clearance, F&F, letters |
+
+## 13. Endpoint Design Rules
+
+- Keep route handlers thin; delegate business rules to `backend/app/services`.
+- Use Pydantic schemas for every request and response shape.
+- Do not allow unrestricted SQL, dynamic model access, or prompt-driven database queries.
+- Enforce ownership, reporting-line, role, and permission checks server-side.
+- Keep file upload endpoints restricted to validated metadata until real storage is explicitly introduced.
+- Return `403` for unauthorized access without leaking whether sensitive records exist.
+- Use status transitions rather than free-form status mutation for approvals and workflow steps.
+- Keep mock payroll, mock HRMS, and non-Darwinbox wording clear in API descriptions.
+
+## 14. Role Matrix
 
 | Area | Employee | Manager | HR Admin |
 | --- | --- | --- | --- |
@@ -374,3 +433,4 @@ Returns assistant tool-call audit logs.
 | Policies | Read | Read | Manage |
 | Assistant audit logs | No | No | Read |
 
+Future roles such as `super_admin`, `hr_manager`, `recruiter`, `hiring_manager`, `finance_manager`, `payroll_manager`, `department_manager`, and `it_admin_staff` should be backed by `roles`, `permissions`, and `role_permissions`, not hardcoded frontend checks alone.

@@ -1,29 +1,11 @@
-import { api } from './client';
+// Central re-export barrel — pages can import from here or directly from api/modules/*
 
-export const login = (payload) => api.post('/auth/login', payload).then((res) => res.data);
-export const getMe = () => api.get('/auth/me').then((res) => res.data);
-export const getEmployeeMe = () => api.get('/employee/me').then((res) => res.data);
-export const getLeaveBalance = () => api.get('/leave/balance').then((res) => res.data);
-export const getMyLeaveRequests = () => api.get('/leave/my-requests').then((res) => res.data);
-export const applyLeave = (payload) => api.post('/leave/apply', payload).then((res) => res.data);
-export const getAttendanceSummary = (month) =>
-  api.get('/attendance/summary', { params: { month } }).then((res) => res.data);
-export const getPendingLeaveRequests = () =>
-  api.get('/manager/leave/pending').then((res) => res.data);
-export const approveLeave = (leaveId, comment = 'Approved') =>
-  api.post(`/manager/leave/${leaveId}/approve`, { comment }).then((res) => res.data);
-export const rejectLeave = (leaveId, comment = 'Rejected') =>
-  api.post(`/manager/leave/${leaveId}/reject`, { comment }).then((res) => res.data);
-export const getMyRegularizationRequests = () =>
-  api.get('/attendance/regularization/my-requests').then((res) => res.data);
-export const applyRegularization = (payload) =>
-  api.post('/attendance/regularization/apply', payload).then((res) => res.data);
-export const getPendingRegularizationRequests = () =>
-  api.get('/manager/attendance-regularization/pending').then((res) => res.data);
-export const approveRegularization = (requestId, comment = 'Approved') =>
-  api.post(`/manager/attendance-regularization/${requestId}/approve`, { comment }).then((res) => res.data);
-export const rejectRegularization = (requestId, comment = 'Rejected') =>
-  api.post(`/manager/attendance-regularization/${requestId}/reject`, { comment }).then((res) => res.data);
-export const getAuditLogs = () => api.get('/audit/logs').then((res) => res.data);
-export const sendAgentMessage = (message) =>
-  api.post('/agent/chat', { message }).then((res) => res.data);
+export * from './modules/auth';
+export * from './modules/leave';
+export * from './modules/attendance';
+export * from './modules/coreHr';
+export * from './modules/recruitment';
+export * from './modules/payroll';
+export * from './modules/compliance';
+export * from './modules/audit';
+export * from './modules/agent';
