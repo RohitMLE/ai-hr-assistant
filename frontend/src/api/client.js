@@ -1,6 +1,6 @@
 import axios from 'axios';
 
-export const API_BASE_URL = 'http://127.0.0.1:8000/api/v1';
+export const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000/api/v1';
 
 export const api = axios.create({
   baseURL: API_BASE_URL,
@@ -32,4 +32,3 @@ api.interceptors.response.use(
 export function getApiError(error, fallback = 'Something went wrong. Please try again.') {
   return error.response?.data?.detail || error.response?.data?.error?.message || fallback;
 }
-

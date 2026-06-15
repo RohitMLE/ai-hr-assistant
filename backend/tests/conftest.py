@@ -1,11 +1,18 @@
 import os
+import sys
+from pathlib import Path
+
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
-os.environ["DATABASE_URL"] = "sqlite:///:memory:"
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+# Use Postgres test database from environment or default to local docker port
+TEST_DATABASE_URL = os.environ.get("TEST_DATABASE_URL", "postgresql://hr_user:hr_password@localhost:5433/hrms_test")
+os.environ["DATABASE_URL"] = TEST_DATABASE_URL
+os.environ["ANTHROPIC_API_KEY"] = ""
 
 from app.main import app
 from app.db.session import Base, get_db
@@ -14,11 +21,7 @@ from app.models.org import Role, Permission, Department, Designation
 from app.core.security import hash_password, create_access_token
 
 # Test database setup
-engine = create_engine(
-    "sqlite:///:memory:", 
-    connect_args={"check_same_thread": False},
-    poolclass=StaticPool
-)
+engine = create_engine(TEST_DATABASE_URL)
 TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 Base.metadata.create_all(bind=engine)
@@ -32,9 +35,12 @@ def override_get_db():
 
 app.dependency_overrides[get_db] = override_get_db
 
+from sqlalchemy import text
+
 @pytest.fixture
 def db_session():
-    Base.metadata.drop_all(bind=engine)
+    with engine.begin() as conn:
+        conn.execute(text("DROP SCHEMA public CASCADE; CREATE SCHEMA public;"))
     Base.metadata.create_all(bind=engine)
     db = TestingSessionLocal()
     try:

@@ -6,6 +6,7 @@ import { useAuth } from '../auth/AuthContext';
 
 const links = [
   { label: 'Dashboard', path: '/dashboard', roles: ['employee', 'manager', 'hr_admin'] },
+  { label: 'Employee Central', path: '/employee-central', roles: ['employee', 'manager', 'hr_admin'] },
   { label: 'Core HR', path: '/core-hr', roles: ['hr_admin', 'manager'] },
   { label: 'Employee Master', path: '/core-hr/employees', roles: ['hr_admin', 'manager'] },
   { label: 'Recruitment', path: '/recruitment', roles: ['hr_admin', 'manager'] },

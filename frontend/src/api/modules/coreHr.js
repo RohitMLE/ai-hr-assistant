@@ -9,6 +9,9 @@ export const listEmployees = (params) =>
 export const getEmployee = (id) =>
   api.get(`/employees/${id}`).then((r) => r.data);
 
+export const getMyEmployeeCentral = () =>
+  api.get('/employees/me/central').then((r) => r.data);
+
 export const createEmployee = (data) =>
   api.post('/employees', data).then((r) => r.data);
 

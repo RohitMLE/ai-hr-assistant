@@ -1,3 +1,9 @@
+from datetime import date
+
+from app.models.employee_profile import EmployeeBankDetail, EmployeeDocument
+from app.models.exit import ExitRequest
+
+
 def test_get_employee_detail_self(client, employee_token, employee_user):
     response = client.get(
         f"/api/v1/employees/{employee_user.id}",
@@ -45,3 +51,71 @@ def test_add_document(client, employee_token, employee_user):
     )
     assert response.status_code == 201
     assert response.json()["doc_type"] == "id_proof"
+
+
+def test_employee_central_self_includes_lifecycle_data(client, db_session, employee_token, employee_user):
+    employee_user.date_of_joining = date(2026, 1, 1)
+    db_session.add_all(
+        [
+            EmployeeDocument(
+                employee_id=employee_user.id,
+                doc_type="id_proof",
+                file_name="id-proof.pdf",
+                verified=True,
+            ),
+            EmployeeBankDetail(
+                employee_id=employee_user.id,
+                bank_name="HDFC Bank",
+                account_number="123456789012",
+                ifsc_code="HDFC0001234",
+                account_holder_name=employee_user.name,
+                is_primary=True,
+            ),
+            ExitRequest(
+                employee_id=employee_user.id,
+                reason="Relocation",
+                requested_last_day=date(2026, 7, 31),
+            ),
+        ]
+    )
+    db_session.commit()
+
+    response = client.get(
+        "/api/v1/employees/me/central",
+        headers={"Authorization": f"Bearer {employee_token}"},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["id"] == employee_user.id
+    assert body["bank_details"][0]["bank_name"] == "HDFC Bank"
+    assert body["probation"]["status"] in {"in_probation", "confirmed"}
+    assert body["exit_status"]["status"] == "Pending"
+    assert any(item["event_type"] == "document" for item in body["timeline"])
+
+
+def test_manager_employee_central_hides_direct_report_bank_details(
+    client,
+    db_session,
+    manager_token,
+    employee_user,
+):
+    db_session.add(
+        EmployeeBankDetail(
+            employee_id=employee_user.id,
+            bank_name="HDFC Bank",
+            account_number="123456789012",
+            ifsc_code="HDFC0001234",
+            account_holder_name=employee_user.name,
+            is_primary=True,
+        )
+    )
+    db_session.commit()
+
+    response = client.get(
+        f"/api/v1/employees/{employee_user.id}",
+        headers={"Authorization": f"Bearer {manager_token}"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["bank_details"] == []

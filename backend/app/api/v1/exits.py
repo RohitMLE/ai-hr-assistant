@@ -8,6 +8,7 @@ from app.models.user import User
 from app.models.exit import ExitRequest, ExitClearanceTask, FinalSettlement
 from app.models.assets import AssetAssignment, Asset
 from app.schemas.phase7 import ExitRequestCreate, ExitRequestResponse, ExitClearanceTaskResponse
+from app.services.audit_service import write_audit_log
 
 router = APIRouter(prefix="/exits", tags=["exits"])
 
@@ -23,6 +24,15 @@ def submit_exit_request(req: ExitRequestCreate, current_user: User = Depends(get
         requested_last_day=req.requested_last_day
     )
     db.add(db_req)
+    db.flush()
+    write_audit_log(
+        db,
+        actor=current_user,
+        action="exit_request_submitted",
+        target_type="exit_request",
+        target_id=db_req.id,
+        details={"requested_last_day": req.requested_last_day},
+    )
     db.commit()
     db.refresh(db_req)
     return db_req
@@ -52,7 +62,15 @@ def approve_exit_request(request_id: int, current_user: User = Depends(require_r
     assets = db.scalars(select(AssetAssignment).where(AssetAssignment.employee_id == req.employee_id, AssetAssignment.status == "Active")).all()
     for assignment in assets:
         db.add(ExitClearanceTask(exit_request_id=req.id, department="IT", task_name=f"Return Asset: {assignment.asset.name} ({assignment.asset.serial_number})"))
-        
+
+    write_audit_log(
+        db,
+        actor=current_user,
+        action="exit_request_approved",
+        target_type="exit_request",
+        target_id=req.id,
+        details={"employee_id": req.employee_id, "approved_last_day": req.approved_last_day},
+    )
     db.commit()
     db.refresh(req)
     return req
@@ -68,7 +86,15 @@ def clear_exit_task(task_id: int, current_user: User = Depends(require_roles_wit
     task.status = "Cleared"
     from datetime import datetime, timezone
     task.cleared_at = datetime.now(timezone.utc)
-    
+
+    write_audit_log(
+        db,
+        actor=current_user,
+        action="exit_clearance_task_cleared",
+        target_type="exit_clearance_task",
+        target_id=task.id,
+        details={"exit_request_id": task.exit_request_id, "department": task.department},
+    )
     db.commit()
     db.refresh(task)
     return task

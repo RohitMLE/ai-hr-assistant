@@ -51,7 +51,7 @@ class Department(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     name: Mapped[str] = mapped_column(String(100), unique=True, nullable=False, index=True)
     code: Mapped[str] = mapped_column(String(20), unique=True, nullable=False)
-    manager_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"), nullable=True)
+    manager_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id", name="fk_departments_manager_id", use_alter=True), nullable=True)
 
     users = relationship("User", back_populates="department_rel", foreign_keys="User.department_id")
 

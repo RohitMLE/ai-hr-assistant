@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from decimal import Decimal
-from typing import Optional
+from typing import Any, Optional
 
 from fastapi import HTTPException, status
 from sqlalchemy import select, func

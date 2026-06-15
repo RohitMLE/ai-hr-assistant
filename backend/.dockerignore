@@ -1,0 +1,11 @@
+.env
+.venv
+__pycache__
+.pytest_cache
+*.pyc
+*.log
+*.db
+chroma_db
+uploads
+server_test.log
+backend.log

@@ -30,7 +30,10 @@ from app.services.employee_service import (
     add_emergency_contact,
     add_employee_document,
     add_job_history,
+    build_employee_timeline,
     create_employee,
+    get_probation_status,
+    get_exit_status,
     get_bank_details,
     get_emergency_contacts,
     get_employee_by_id,
@@ -106,6 +109,17 @@ def employment_types(_user: User = Depends(get_current_user), db: Session = Depe
     return [EmploymentTypeResponse.model_validate(e) for e in get_employment_types(db)]
 
 
+@router.get("/me/central", response_model=EmployeeDetailResponse)
+def my_employee_central(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    employee = get_employee_by_id(db, current_user.id)
+    if employee is None:
+        raise HTTPException(status_code=404, detail="Employee not found")
+    return _employee_central_response(db, employee, current_user)
+
+
 # ── Detail ─────────────────────────────────────────────────────────────────
 
 @router.get("/{employee_id}", response_model=EmployeeDetailResponse)
@@ -118,14 +132,7 @@ def employee_detail(
     if employee is None:
         raise HTTPException(status_code=404, detail="Employee not found")
     _assert_self_or_manager(db, current_user, employee_id)
-    can_view_bank_details = current_user.id == employee_id or current_user.role == "hr_admin"
-    return EmployeeDetailResponse.from_user(
-        employee,
-        documents=get_employee_documents(db, employee_id),
-        bank_details=get_bank_details(db, employee_id) if can_view_bank_details else [],
-        emergency_contacts=get_emergency_contacts(db, employee_id),
-        job_history=get_job_history(db, employee_id),
-    )
+    return _employee_central_response(db, employee, current_user)
 
 
 # ── Update ─────────────────────────────────────────────────────────────────
@@ -149,13 +156,7 @@ def edit_employee(
         details={"fields": sorted(payload.model_dump(exclude_unset=True).keys())},
     )
     db.commit()
-    return EmployeeDetailResponse.from_user(
-        employee,
-        documents=get_employee_documents(db, employee_id),
-        bank_details=get_bank_details(db, employee_id),
-        emergency_contacts=get_emergency_contacts(db, employee_id),
-        job_history=get_job_history(db, employee_id),
-    )
+    return _employee_central_response(db, employee, _user)
 
 
 # ── Documents ──────────────────────────────────────────────────────────────
@@ -328,3 +329,33 @@ def _assert_self_or_manager(db: Session, current_user: User, employee_id: int) -
 def _assert_self_or_admin(current_user: User, employee_id: int) -> None:
     if current_user.id != employee_id and current_user.role != "hr_admin":
         raise HTTPException(status_code=403, detail="Access denied")
+
+
+def _employee_central_response(
+    db: Session,
+    employee: User,
+    current_user: User,
+) -> EmployeeDetailResponse:
+    can_view_bank_details = current_user.id == employee.id or current_user.role == "hr_admin"
+    documents = get_employee_documents(db, employee.id)
+    bank_details = get_bank_details(db, employee.id) if can_view_bank_details else []
+    emergency_contacts = get_emergency_contacts(db, employee.id)
+    job_history = get_job_history(db, employee.id)
+    exit_status = get_exit_status(db, employee.id)
+    return EmployeeDetailResponse.from_user(
+        employee,
+        documents=documents,
+        bank_details=bank_details,
+        emergency_contacts=emergency_contacts,
+        job_history=job_history,
+        timeline=build_employee_timeline(
+            employee,
+            documents,
+            bank_details,
+            emergency_contacts,
+            job_history,
+            exit_status,
+        ),
+        probation=get_probation_status(employee),
+        exit_status=exit_status,
+    )

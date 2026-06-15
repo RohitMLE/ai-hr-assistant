@@ -42,72 +42,204 @@ from app.models.onboarding import PolicyAcknowledgment
 from app.models.exit import ExitRequest, ExitClearanceTask, FinalSettlement
 from app.models.pending_action import PendingAction
 from app.models.recruitment import Candidate, Job, Offer
+from app.models.workforce_planning import WorkforcePlan, HeadcountBudget, SkillGapItem
+from app.models.notification import Notification
 from app.models.user import User
 from app.models.work_location import EmploymentType, WorkLocation
 from app.services.onboarding_service import create_onboarding_case, update_onboarding_task
+
+
+def ensure_phase9_baseline(db: Session) -> None:
+    """Backfill newer seed objects without duplicating existing demo data."""
+    eng_dept = db.scalar(select(Department).where(Department.code == "ENG"))
+    employee = db.scalar(select(User).where(User.email == "vineet@example.com"))
+    software_engineer = db.scalar(
+        select(Designation).where(Designation.title == "Software Engineer")
+    )
+    if not eng_dept or not employee or not software_engineer:
+        return
+
+    policy_specs = [
+        {
+            "title": "Work From Home Policy",
+            "category": "Remote Work",
+            "content": "Employees are allowed to work from home for up to 2 days per week.",
+        },
+        {
+            "title": "Leave Policy",
+            "category": "Time Off",
+            "content": "Employees are entitled to various leaves as per organization rules.",
+        },
+    ]
+    for spec in policy_specs:
+        policy = db.scalar(select(HRPolicy).where(HRPolicy.title == spec["title"]))
+        if not policy:
+            db.add(HRPolicy(**spec))
+
+    plan = db.scalar(
+        select(WorkforcePlan).where(
+            WorkforcePlan.department_id == eng_dept.id,
+            WorkforcePlan.year == 2026,
+        )
+    )
+    if not plan:
+        plan = WorkforcePlan(
+            department_id=eng_dept.id,
+            year=2026,
+            status="active",
+        )
+        db.add(plan)
+        db.flush()
+
+    budget = db.scalar(
+        select(HeadcountBudget).where(
+            HeadcountBudget.plan_id == plan.id,
+            HeadcountBudget.designation_id == software_engineer.id,
+        )
+    )
+    if not budget:
+        db.add(
+            HeadcountBudget(
+                plan_id=plan.id,
+                designation_id=software_engineer.id,
+                current_count=10,
+                planned_additions=5,
+                budget_amount=5000000.00,
+            )
+        )
+
+    skill_gap = db.scalar(
+        select(SkillGapItem).where(
+            SkillGapItem.plan_id == plan.id,
+            SkillGapItem.required_skill == "React",
+        )
+    )
+    if not skill_gap:
+        db.add(
+            SkillGapItem(
+                plan_id=plan.id,
+                required_skill="React",
+                current_proficiency="Intermediate",
+                target_proficiency="Advanced",
+            )
+        )
+
+    notification_message = "The HRMS will be down for maintenance on Saturday."
+    notification = db.scalar(
+        select(Notification).where(
+            Notification.user_id == employee.id,
+            Notification.message == notification_message,
+        )
+    )
+    if not notification:
+        db.add(
+            Notification(
+                user_id=employee.id,
+                message=notification_message,
+                is_read=False,
+            )
+        )
+
+    document = db.scalar(
+        select(EmployeeDocument).where(
+            EmployeeDocument.employee_id == employee.id,
+            EmployeeDocument.doc_type == "aadhaar",
+        )
+    )
+    if not document:
+        db.add(
+            EmployeeDocument(
+                employee_id=employee.id,
+                doc_type="aadhaar",
+                file_url="/mock-documents/EMP001-aadhaar.pdf",
+                file_name="EMP001-aadhaar.pdf",
+                verified=True,
+            )
+        )
+
+    bank_detail = db.scalar(
+        select(EmployeeBankDetail).where(
+            EmployeeBankDetail.employee_id == employee.id,
+            EmployeeBankDetail.account_number == "123456789012",
+        )
+    )
+    if not bank_detail:
+        db.add(
+            EmployeeBankDetail(
+                employee_id=employee.id,
+                bank_name="HDFC Bank",
+                account_number="123456789012",
+                ifsc_code="HDFC0001234",
+                account_holder_name=employee.name,
+                is_primary=True,
+            )
+        )
+
+    emergency_contact = db.scalar(
+        select(EmployeeEmergencyContact).where(
+            EmployeeEmergencyContact.employee_id == employee.id,
+            EmployeeEmergencyContact.phone == "+91-9811111111",
+        )
+    )
+    if not emergency_contact:
+        db.add(
+            EmployeeEmergencyContact(
+                employee_id=employee.id,
+                name="Neha Shrivastava",
+                relationship_type="Spouse",
+                phone="+91-9811111111",
+                email="neha@example.com",
+            )
+        )
+
+    job_history = db.scalar(
+        select(EmployeeJobHistory).where(
+            EmployeeJobHistory.employee_id == employee.id,
+            EmployeeJobHistory.company_name == "Previous Tech Pvt Ltd",
+        )
+    )
+    if not job_history:
+        db.add(
+            EmployeeJobHistory(
+                employee_id=employee.id,
+                company_name="Previous Tech Pvt Ltd",
+                job_title="Associate Software Engineer",
+                from_date=date(2021, 6, 1),
+                to_date=date(2023, 6, 30),
+                reason_for_leaving="Joined the mock HRMS demo organization.",
+            )
+        )
+
+    exit_request = db.scalar(
+        select(ExitRequest).where(
+            ExitRequest.employee_id == employee.id,
+            ExitRequest.reason == "Better opportunity.",
+        )
+    )
+    if not exit_request:
+        db.add(
+            ExitRequest(
+                employee_id=employee.id,
+                reason="Better opportunity.",
+                requested_last_day=date(2026, 7, 31),
+            )
+        )
 
 
 def seed() -> None:
     init_db()
     db = SessionLocal()
     try:
-        # Clear existing data
-        db.execute(delete(AuditLog))
-        db.execute(delete(AttendanceRecord))
-        db.execute(delete(AttendanceRegularizationRequest))
-        db.execute(delete(EmployeeJobHistory))
-        db.execute(delete(EmployeeEmergencyContact))
-        db.execute(delete(EmployeeBankDetail))
-        db.execute(delete(EmployeeDocument))
-        db.execute(delete(FinalSettlement))
-        db.execute(delete(ExitClearanceTask))
-        db.execute(delete(ExitRequest))
-        db.execute(delete(PolicyAcknowledgment))
-        db.execute(delete(TicketComment))
-        db.execute(delete(HelpdeskTicket))
-        db.execute(delete(AssetAssignment))
-        db.execute(delete(Asset))
-        
-        db.execute(delete(OnboardingTask))
-        db.execute(delete(OnboardingCase))
-        db.execute(delete(HRPolicy))
-        db.execute(delete(Recognition))
-        db.execute(delete(SurveyResponse))
-        db.execute(delete(Survey))
-        db.execute(delete(Announcement))
-        db.execute(delete(CourseAssignment))
-        db.execute(delete(LearningCourse))
-        db.execute(delete(PerformanceReview))
-        db.execute(delete(PerformanceGoal))
-        db.execute(delete(PerformanceCycle))
-        db.execute(delete(ExpenseItem))
-        db.execute(delete(ExpenseClaim))
-        db.execute(delete(TravelRequest))
-        db.execute(delete(PayslipComponent))
-        db.execute(delete(Payslip))
-        db.execute(delete(PayrollRun))
-        db.execute(delete(SalaryStructureComponent))
-        db.execute(delete(SalaryStructure))
-        db.execute(delete(PayrollComponent))
-        db.execute(delete(TaxSlab))
-        db.execute(delete(ComplianceSetting))
-        db.execute(delete(PendingAction))
-        db.execute(delete(LeaveRequest))
-        db.execute(delete(LeaveBalance))
-        db.execute(delete(Offer))
-        db.execute(delete(Candidate))
-        db.execute(delete(Job))
-        db.execute(delete(User))
-        db.execute(delete(Department))
-        db.execute(delete(Designation))
-        db.execute(role_permission_association.delete())
-        db.execute(delete(Role))
-        db.execute(delete(Permission))
-        db.execute(delete(Shift))
-        db.execute(delete(Holiday))
-        db.execute(delete(WorkLocation))
-        db.execute(delete(EmploymentType))
-        db.commit()
+        # Check if already seeded to ensure idempotency
+        existing_hr = db.query(User).filter(User.email == "hr@example.com").first()
+        if existing_hr:
+            ensure_phase9_baseline(db)
+            db.commit()
+            print("Seed data already exists. Verified Phase 9 baseline data.")
+            return
+
+        # Clear existing data only if we are seeding from scratch
+
 
         # 1. Seed Work Locations
         loc_bangalore = WorkLocation(name="Bangalore HQ", city="Bangalore", country="India", timezone="Asia/Kolkata")
@@ -507,10 +639,14 @@ def seed() -> None:
             )
         )
         db.commit()
+
+        # 18. Phase 8/9 Objects
+        ensure_phase9_baseline(db)
+        db.commit()
     finally:
         db.close()
 
 
 if __name__ == "__main__":
     seed()
-    print("Seed data loaded successfully.")
+    print("Seed command completed successfully.")

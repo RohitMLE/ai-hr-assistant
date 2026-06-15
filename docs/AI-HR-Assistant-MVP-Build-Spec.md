@@ -433,6 +433,24 @@ Status: started in the current codebase.
 
 - Add headcount planning, budgets, skill gap analysis, cross-module dashboards, exportable reports, and notification records.
 
+### Phase 9: Production Foundation
+
+- Standardize the local and Docker runtime on PostgreSQL 16 with Alembic-managed schema creation.
+- Keep Docker development hot reload separate from production-style container startup.
+- Run pytest against a separate test database, never the development database.
+- Persist HR Policy RAG assets with durable storage for uploaded policy PDFs and Chroma vector data.
+- Keep seed data idempotent so reruns do not duplicate users, employees, departments, policies, workforce plans, analytics-facing demo data, or notifications.
+- Preserve Phase 1-8 user workflows while adding health, readiness, setup, RBAC, and reset documentation.
+
+### Phase 10: Employee Central Upgrade
+
+- Expand Employee Detail into a full Employee Central profile with tabs for timeline, documents, bank details, emergency contacts, job history, probation, and exit status.
+- Reuse the existing Core HR models before adding new tables: `EmployeeDocument`, `EmployeeBankDetail`, `EmployeeEmergencyContact`, `EmployeeJobHistory`, `ExitRequest`, and related org metadata are already present.
+- Add backend endpoints only where the current employee profile APIs cannot support the UI safely.
+- Enforce role checks for sensitive fields such as bank details, documents, compensation-adjacent data, and exit records.
+- Add audit events for profile changes, document upload or verification, bank-detail changes, job-history updates, probation status changes, and exit-status transitions.
+- Add focused tests for self-service access, manager direct-report access, HR admin access, and forbidden cross-employee access.
+
 ## 19. Frontend Navigation Target
 
 The sidebar should eventually include:

@@ -49,6 +49,14 @@ export default function App() {
       >
         <Route path="/dashboard" element={<DashboardPage />} />
         <Route
+          path="/employee-central"
+          element={
+            <ProtectedRoute roles={['employee', 'manager', 'hr_admin']}>
+              <EmployeeDetailPage selfService />
+            </ProtectedRoute>
+          }
+        />
+        <Route
           path="/core-hr"
           element={
             <ProtectedRoute roles={['hr_admin', 'manager']}>

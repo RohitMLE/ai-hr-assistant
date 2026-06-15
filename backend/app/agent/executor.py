@@ -104,15 +104,17 @@ def execute_tool(tool_name: str, tool_input: dict[str, Any], db: Session, user: 
         query = tool_input.get("query", "")
         try:
             import chromadb
-            from sentence_transformers import SentenceTransformer
+            from app.core.config import get_settings
             
-            client = chromadb.PersistentClient(path="./chroma_db")
+            client = chromadb.PersistentClient(path=get_settings().chroma_db_path)
             collection = client.get_or_create_collection("hr_policies")
             
             if collection.count() == 0:
                 policies = tools.search_hr_policies_tool(db, query)
                 return {"rag_results": [{"source": p.title, "excerpt": p.content} for p in policies]}
             
+            from sentence_transformers import SentenceTransformer
+
             model = SentenceTransformer('all-MiniLM-L6-v2')
             query_embedding = model.encode(query).tolist()
             

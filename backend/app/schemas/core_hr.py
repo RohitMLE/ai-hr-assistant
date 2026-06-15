@@ -159,6 +159,31 @@ class JobHistoryAddRequest(BaseModel):
     reason_for_leaving: Optional[str] = None
 
 
+class EmployeeTimelineItem(BaseModel):
+    date: datetime
+    event_type: str
+    title: str
+    description: Optional[str] = None
+
+
+class ProbationStatusResponse(BaseModel):
+    status: str
+    start_date: Optional[date]
+    end_date: Optional[date]
+    days_remaining: int
+
+
+class ExitStatusResponse(BaseModel):
+    id: int
+    status: str
+    reason: str
+    requested_last_day: date
+    approved_last_day: Optional[date]
+    created_at: datetime
+    clearance_pending: int = 0
+    clearance_completed: int = 0
+
+
 # ── Employee detail ────────────────────────────────────────────────────────
 
 class EmployeeDetailResponse(EmployeeListItem):
@@ -171,9 +196,22 @@ class EmployeeDetailResponse(EmployeeListItem):
     bank_details: List[BankDetailResponse] = []
     emergency_contacts: List[EmergencyContactResponse] = []
     job_history: List[JobHistoryResponse] = []
+    timeline: List[EmployeeTimelineItem] = []
+    probation: Optional[ProbationStatusResponse] = None
+    exit_status: Optional[ExitStatusResponse] = None
 
     @classmethod
-    def from_user(cls, user, documents=None, bank_details=None, emergency_contacts=None, job_history=None) -> "EmployeeDetailResponse":
+    def from_user(
+        cls,
+        user,
+        documents=None,
+        bank_details=None,
+        emergency_contacts=None,
+        job_history=None,
+        timeline=None,
+        probation=None,
+        exit_status=None,
+    ) -> "EmployeeDetailResponse":
         return cls(
             id=user.id,
             name=user.name,
@@ -196,6 +234,9 @@ class EmployeeDetailResponse(EmployeeListItem):
             bank_details=[BankDetailResponse.model_validate(b) for b in (bank_details or [])],
             emergency_contacts=[EmergencyContactResponse.model_validate(e) for e in (emergency_contacts or [])],
             job_history=[JobHistoryResponse.model_validate(h) for h in (job_history or [])],
+            timeline=timeline or [],
+            probation=probation,
+            exit_status=exit_status,
         )
 
 

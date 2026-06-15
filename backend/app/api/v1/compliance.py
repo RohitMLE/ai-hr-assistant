@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, File, UploadFile, HTTPException
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
+from app.core.config import get_settings
 from app.db.session import get_db
 from app.models.user import User
 from app.schemas.policy import HRPolicyListResponse
@@ -37,7 +38,7 @@ def upload_policy_pdf(
     if not file.filename.endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Only PDF files are allowed")
         
-    upload_dir = "uploads/policies"
+    upload_dir = get_settings().policy_upload_dir
     os.makedirs(upload_dir, exist_ok=True)
     file_path = os.path.join(upload_dir, f"{policy_id}_{file.filename}")
     

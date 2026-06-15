@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import random
 import string
+from datetime import datetime, time, timezone, timedelta
 from typing import List, Optional
 
 from sqlalchemy import or_, select
@@ -14,6 +15,7 @@ from app.models.employee_profile import (
     EmployeeEmergencyContact,
     EmployeeJobHistory,
 )
+from app.models.exit import ExitRequest
 from app.models.org import Role
 from app.models.user import User
 from app.schemas.core_hr import (
@@ -85,6 +87,128 @@ def list_employees(
 
 def get_employee_by_id(db: Session, employee_id: int) -> Optional[User]:
     return db.get(User, employee_id)
+
+
+def get_probation_status(user: User, probation_days: int = 90) -> dict:
+    if not user.date_of_joining:
+        return {
+            "status": "not_configured",
+            "start_date": None,
+            "end_date": None,
+            "days_remaining": 0,
+        }
+
+    end_date = user.date_of_joining + timedelta(days=probation_days)
+    today = datetime.now(timezone.utc).date()
+    days_remaining = max((end_date - today).days, 0)
+    return {
+        "status": "in_probation" if today <= end_date else "confirmed",
+        "start_date": user.date_of_joining,
+        "end_date": end_date,
+        "days_remaining": days_remaining,
+    }
+
+
+def get_exit_status(db: Session, employee_id: int) -> Optional[dict]:
+    exit_request = db.scalar(
+        select(ExitRequest)
+        .where(ExitRequest.employee_id == employee_id)
+        .order_by(ExitRequest.created_at.desc())
+    )
+    if not exit_request:
+        return None
+
+    tasks = exit_request.tasks or []
+    return {
+        "id": exit_request.id,
+        "status": exit_request.status,
+        "reason": exit_request.reason,
+        "requested_last_day": exit_request.requested_last_day,
+        "approved_last_day": exit_request.approved_last_day,
+        "created_at": exit_request.created_at,
+        "clearance_pending": len([task for task in tasks if task.status != "Cleared"]),
+        "clearance_completed": len([task for task in tasks if task.status == "Cleared"]),
+    }
+
+
+def build_employee_timeline(
+    user: User,
+    documents: List[EmployeeDocument],
+    bank_details: List[EmployeeBankDetail],
+    emergency_contacts: List[EmployeeEmergencyContact],
+    job_history: List[EmployeeJobHistory],
+    exit_status: Optional[dict],
+) -> list[dict]:
+    items: list[dict] = [
+        {
+            "date": user.created_at,
+            "event_type": "profile_created",
+            "title": "Employee profile created",
+            "description": f"{user.employee_code} was added to the mock HRMS.",
+        }
+    ]
+
+    if user.date_of_joining:
+        items.append(
+            {
+                "date": datetime.combine(user.date_of_joining, time.min, tzinfo=timezone.utc),
+                "event_type": "joined",
+                "title": "Joined organization",
+                "description": f"Joined {user.department or 'the organization'}.",
+            }
+        )
+
+    for doc in documents:
+        items.append(
+            {
+                "date": doc.uploaded_at,
+                "event_type": "document",
+                "title": f"{doc.doc_type} document added",
+                "description": "Verified" if doc.verified else "Pending verification",
+            }
+        )
+
+    for bank in bank_details:
+        items.append(
+            {
+                "date": bank.created_at,
+                "event_type": "bank_detail",
+                "title": "Bank detail added",
+                "description": bank.bank_name,
+            }
+        )
+
+    for contact in emergency_contacts:
+        items.append(
+            {
+                "date": contact.created_at,
+                "event_type": "emergency_contact",
+                "title": "Emergency contact added",
+                "description": f"{contact.name} ({contact.relationship_type})",
+            }
+        )
+
+    for history in job_history:
+        items.append(
+            {
+                "date": history.created_at,
+                "event_type": "job_history",
+                "title": "Job history added",
+                "description": f"{history.job_title} at {history.company_name}",
+            }
+        )
+
+    if exit_status:
+        items.append(
+            {
+                "date": exit_status["created_at"],
+                "event_type": "exit",
+                "title": "Exit request submitted",
+                "description": f"Status: {exit_status['status']}",
+            }
+        )
+
+    return sorted(items, key=lambda item: item["date"], reverse=True)
 
 
 def create_employee(db: Session, payload: EmployeeCreateRequest) -> User:

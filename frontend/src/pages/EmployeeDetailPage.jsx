@@ -1,12 +1,21 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { getEmployee, verifyDocument } from '../api/modules/coreHr';
+import { getEmployee, getMyEmployeeCentral, verifyDocument } from '../api/modules/coreHr';
 import Badge from '../components/Badge';
 import { useAuth } from '../auth/AuthContext';
 
-const TABS = ['Profile', 'Documents', 'Bank Details', 'Emergency Contacts', 'Job History'];
+const TABS = [
+  'Profile',
+  'Timeline',
+  'Documents',
+  'Bank Details',
+  'Emergency Contacts',
+  'Job History',
+  'Probation',
+  'Exit Status',
+];
 
-export default function EmployeeDetailPage() {
+export default function EmployeeDetailPage({ selfService = false }) {
   const { id } = useParams();
   const { user } = useAuth();
   const navigate = useNavigate();
@@ -18,18 +27,19 @@ export default function EmployeeDetailPage() {
 
   const load = () => {
     setLoading(true);
-    getEmployee(id)
+    const request = selfService || !id ? getMyEmployeeCentral() : getEmployee(id);
+    request
       .then(setEmployee)
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
   };
 
-  useEffect(load, [id]);
+  useEffect(load, [id, selfService]);
 
   const handleVerify = async (docId) => {
     setVerifying(docId);
     try {
-      await verifyDocument(id, docId);
+      await verifyDocument(id || employee?.id, docId);
       load();
     } catch (e) {
       alert(e.message);
@@ -47,12 +57,15 @@ export default function EmployeeDetailPage() {
       {/* Header */}
       <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div>
-          <button
-            onClick={() => navigate('/core-hr/employees')}
-            className="mb-2 text-xs text-ink-400 hover:text-ink-600"
-          >
-            ← Back to Employee List
-          </button>
+          {!selfService && (
+            <button
+              onClick={() => navigate('/core-hr/employees')}
+              className="mb-2 text-xs text-ink-400 hover:text-ink-600"
+            >
+              Back to Employee List
+            </button>
+          )}
+          <p className="mb-1 text-xs font-semibold uppercase text-ink-400">Employee Central</p>
           <h1 className="text-xl font-bold text-ink-900">{employee.name}</h1>
           <div className="mt-1 flex flex-wrap items-center gap-2">
             <span className="font-mono text-xs text-ink-500">{employee.employee_code}</span>
@@ -66,7 +79,7 @@ export default function EmployeeDetailPage() {
             </span>
           </div>
         </div>
-        {user?.role === 'hr_admin' && (
+        {user?.role === 'hr_admin' && !selfService && (
           <Link
             to={`/core-hr/employees/${id}/edit`}
             className="btn-secondary self-start sm:self-auto"
@@ -103,6 +116,9 @@ export default function EmployeeDetailPage() {
       {activeTab === 'Bank Details' && <BankDetailsTab banks={employee.bank_details} />}
       {activeTab === 'Emergency Contacts' && <EmergencyTab contacts={employee.emergency_contacts} />}
       {activeTab === 'Job History' && <JobHistoryTab history={employee.job_history} />}
+      {activeTab === 'Timeline' && <TimelineTab items={employee.timeline} />}
+      {activeTab === 'Probation' && <ProbationTab probation={employee.probation} />}
+      {activeTab === 'Exit Status' && <ExitStatusTab exitStatus={employee.exit_status} />}
     </div>
   );
 }
@@ -119,7 +135,7 @@ function Field({ label, value }) {
 function ProfileTab({ emp }) {
   return (
     <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
-      <div className="rounded-xl border border-ink-200 bg-white p-5">
+      <div className="rounded-lg border border-ink-200 bg-white p-5">
         <h3 className="mb-4 text-sm font-semibold text-ink-700">Personal Information</h3>
         <div className="space-y-3">
           <Field label="Full Name" value={emp.name} />
@@ -131,7 +147,7 @@ function ProfileTab({ emp }) {
           <Field label="Address" value={emp.address} />
         </div>
       </div>
-      <div className="rounded-xl border border-ink-200 bg-white p-5">
+      <div className="rounded-lg border border-ink-200 bg-white p-5">
         <h3 className="mb-4 text-sm font-semibold text-ink-700">Work Details</h3>
         <div className="space-y-3">
           <Field label="Employee Code" value={emp.employee_code} />
@@ -143,6 +159,15 @@ function ProfileTab({ emp }) {
           <Field label="Work Location" value={emp.work_location?.name} />
         </div>
       </div>
+      <div className="rounded-lg border border-ink-200 bg-white p-5">
+        <h3 className="mb-4 text-sm font-semibold text-ink-700">Lifecycle Snapshot</h3>
+        <div className="space-y-3">
+          <Field label="Probation Status" value={emp.probation?.status?.replace(/_/g, ' ')} />
+          <Field label="Probation End" value={emp.probation?.end_date} />
+          <Field label="Exit Status" value={emp.exit_status?.status || 'No active exit'} />
+          <Field label="Latest Event" value={formatDateTime(emp.timeline?.[0]?.date)} />
+        </div>
+      </div>
     </div>
   );
 }
@@ -152,7 +177,7 @@ function DocumentsTab({ docs, onVerify, verifying, isAdmin }) {
     return <EmptyState message="No documents uploaded." />;
   }
   return (
-    <div className="overflow-x-auto rounded-xl border border-ink-200 bg-white">
+    <div className="overflow-x-auto rounded-lg border border-ink-200 bg-white">
       <table className="min-w-full text-sm">
         <thead>
           <tr className="border-b border-ink-100 bg-ink-50">
@@ -208,7 +233,7 @@ function BankDetailsTab({ banks }) {
   return (
     <div className="grid gap-4 sm:grid-cols-2">
       {banks.map((b) => (
-        <div key={b.id} className="rounded-xl border border-ink-200 bg-white p-5">
+        <div key={b.id} className="rounded-lg border border-ink-200 bg-white p-5">
           <div className="mb-2 flex items-center justify-between">
             <span className="font-semibold text-ink-900">{b.bank_name}</span>
             {b.is_primary && (
@@ -231,7 +256,7 @@ function EmergencyTab({ contacts }) {
   return (
     <div className="grid gap-4 sm:grid-cols-2">
       {contacts.map((c) => (
-        <div key={c.id} className="rounded-xl border border-ink-200 bg-white p-5">
+        <div key={c.id} className="rounded-lg border border-ink-200 bg-white p-5">
           <p className="font-semibold text-ink-900">{c.name}</p>
           <p className="text-xs text-ink-500">{c.relationship_type}</p>
           <div className="mt-3 space-y-1">
@@ -249,7 +274,7 @@ function JobHistoryTab({ history }) {
   return (
     <div className="space-y-3">
       {history.map((h) => (
-        <div key={h.id} className="rounded-xl border border-ink-200 bg-white p-5">
+        <div key={h.id} className="rounded-lg border border-ink-200 bg-white p-5">
           <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
             <div>
               <p className="font-semibold text-ink-900">{h.job_title}</p>
@@ -270,10 +295,88 @@ function JobHistoryTab({ history }) {
   );
 }
 
+function TimelineTab({ items }) {
+  if (!items?.length) return <EmptyState message="No profile timeline events yet." />;
+  return (
+    <div className="rounded-lg border border-ink-200 bg-white">
+      <div className="divide-y divide-ink-100">
+        {items.map((item, index) => (
+          <div
+            key={`${item.event_type}-${item.date}-${index}`}
+            className="grid gap-3 px-5 py-4 sm:grid-cols-[11rem_1fr]"
+          >
+            <div className="space-y-2">
+              <p className="text-xs font-medium text-ink-500">{formatDateTime(item.date)}</p>
+              <Badge value={item.event_type} />
+            </div>
+            <div>
+              <p className="text-sm font-semibold text-ink-900">{item.title}</p>
+              {item.description && <p className="mt-1 text-sm text-ink-500">{item.description}</p>}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function ProbationTab({ probation }) {
+  if (!probation) return <EmptyState message="Probation details are not configured." />;
+  return (
+    <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <Metric label="Status" value={probation.status?.replace(/_/g, ' ')} />
+      <Metric label="Start Date" value={probation.start_date || '—'} />
+      <Metric label="End Date" value={probation.end_date || '—'} />
+      <Metric label="Days Remaining" value={probation.days_remaining} />
+    </div>
+  );
+}
+
+function ExitStatusTab({ exitStatus }) {
+  if (!exitStatus) return <EmptyState message="No exit request is active for this employee." />;
+  return (
+    <div className="grid gap-4 lg:grid-cols-[1.2fr_0.8fr]">
+      <div className="rounded-lg border border-ink-200 bg-white p-5">
+        <div className="mb-4 flex items-center justify-between">
+          <h3 className="text-sm font-semibold text-ink-700">Exit Request</h3>
+          <Badge value={exitStatus.status} />
+        </div>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <Field label="Requested Last Day" value={exitStatus.requested_last_day} />
+          <Field label="Approved Last Day" value={exitStatus.approved_last_day} />
+          <Field label="Submitted" value={formatDateTime(exitStatus.created_at)} />
+          <Field label="Reason" value={exitStatus.reason} />
+        </div>
+      </div>
+      <div className="rounded-lg border border-ink-200 bg-white p-5">
+        <h3 className="mb-4 text-sm font-semibold text-ink-700">Clearance</h3>
+        <div className="grid grid-cols-2 gap-3">
+          <Metric label="Pending" value={exitStatus.clearance_pending} />
+          <Metric label="Cleared" value={exitStatus.clearance_completed} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Metric({ label, value }) {
+  return (
+    <div className="rounded-lg border border-ink-200 bg-white p-4">
+      <p className="text-xs font-medium text-ink-500">{label}</p>
+      <p className="mt-2 text-lg font-semibold capitalize text-ink-900">{value ?? '—'}</p>
+    </div>
+  );
+}
+
 function EmptyState({ message }) {
   return (
-    <div className="rounded-xl border border-ink-200 bg-white py-12 text-center">
+    <div className="rounded-lg border border-ink-200 bg-white py-12 text-center">
       <p className="text-sm text-ink-400">{message}</p>
     </div>
   );
+}
+
+function formatDateTime(value) {
+  if (!value) return '—';
+  return new Date(value).toLocaleDateString();
 }
