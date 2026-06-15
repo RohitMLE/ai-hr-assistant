@@ -100,6 +100,37 @@ def execute_tool(tool_name: str, tool_input: dict[str, Any], db: Session, user: 
             "policies": [{"title": p.title, "category": p.category, "content": p.content} for p in policies]
         }
 
+    if tool_name == "search_hr_policies_rag":
+        query = tool_input.get("query", "")
+        try:
+            import chromadb
+            from sentence_transformers import SentenceTransformer
+            
+            client = chromadb.PersistentClient(path="./chroma_db")
+            collection = client.get_or_create_collection("hr_policies")
+            
+            if collection.count() == 0:
+                policies = tools.search_hr_policies_tool(db, query)
+                return {"rag_results": [{"source": p.title, "excerpt": p.content} for p in policies]}
+            
+            model = SentenceTransformer('all-MiniLM-L6-v2')
+            query_embedding = model.encode(query).tolist()
+            
+            results = collection.query(
+                query_embeddings=[query_embedding],
+                n_results=3
+            )
+            
+            return {
+                "rag_results": [
+                    {"source": meta["source"], "excerpt": doc}
+                    for meta, doc in zip(results["metadatas"][0], results["documents"][0])
+                ]
+            }
+        except Exception as e:
+            policies = tools.search_hr_policies_tool(db, query)
+            return {"rag_results": [{"source": p.title, "excerpt": p.content} for p in policies]}
+
     if tool_name == "get_org_hierarchy":
         hierarchy = tools.get_org_hierarchy_tool(db)
         return {

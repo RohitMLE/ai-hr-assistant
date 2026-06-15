@@ -142,6 +142,17 @@ _ALL_TOOLS: list[dict[str, Any]] = [
     },
     # ── Compliance / Policy ────────────────────────────────────────────────
     {
+        "name": "search_hr_policies_rag",
+        "description": "Semantic search over HR policies using RAG. Returns matching policy content extracted from PDF documents based on meaning, not just exact keyword match.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "The natural language question or keyword to search for in HR policies."},
+            },
+            "required": ["query"],
+        },
+    },
+    {
         "name": "search_hr_policies",
         "description": "Search the HR policy library by keyword. Returns matching policy titles and content.",
         "input_schema": {
@@ -233,6 +244,7 @@ _TOOL_PERMISSIONS: dict[str, set[str]] = {
     "reject_regularization_request":    {"manager", "hr_admin"},
     "get_my_payslip":                   {"employee", "manager", "hr_admin"},
     "search_hr_policies":               {"employee", "manager", "hr_admin"},
+    "search_hr_policies_rag":           {"employee", "manager", "hr_admin"},
     "get_org_hierarchy":                {"employee", "manager", "hr_admin"},
     "search_employees":                 {"manager", "hr_admin"},
     "get_employee_profile":             {"manager", "hr_admin"},

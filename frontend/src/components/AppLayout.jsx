@@ -1,4 +1,6 @@
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
+import { useEffect, useState } from 'react';
+import { api } from '../api/client';
 import Badge from './Badge';
 import { useAuth } from '../auth/AuthContext';
 
@@ -29,12 +31,23 @@ const links = [
   { label: 'Payroll Processing', path: '/payroll/runs', roles: ['hr_admin'] },
   { label: 'Payroll Config', path: '/payroll/config', roles: ['hr_admin'] },
   { label: 'Audit Logs', path: '/audit/logs', roles: ['hr_admin'] },
+  { label: 'Workforce Planning', path: '/workforce-planning', roles: ['hr_admin', 'manager'] },
+  { label: 'Analytics', path: '/analytics', roles: ['hr_admin', 'manager'] },
 ];
 
 export default function AppLayout() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
   const visibleLinks = links.filter((link) => link.roles.includes(user?.role));
+  const [notifications, setNotifications] = useState([]);
+
+  useEffect(() => {
+    if (user) {
+      api.get('/notifications').then(res => setNotifications(res.data)).catch(() => {});
+    }
+  }, [user]);
+
+  const unreadCount = notifications.filter(n => !n.is_read).length;
 
   const handleLogout = () => {
     logout();
@@ -50,7 +63,7 @@ export default function AppLayout() {
             <p className="text-xs text-ink-500">Darwinbox-like POC</p>
           </div>
         </div>
-        <nav className="space-y-1 px-3 py-4">
+        <nav className="space-y-1 px-3 py-4 overflow-y-auto h-[calc(100vh-4rem)] pb-10">
           {visibleLinks.map((link) => (
             <NavLink
               key={link.path}
@@ -94,6 +107,16 @@ export default function AppLayout() {
                   </NavLink>
                 ))}
               </nav>
+              
+              <div className="relative mx-4">
+                <button className="text-ink-600 hover:text-ink-900 focus:outline-none">
+                  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"></path></svg>
+                </button>
+                {unreadCount > 0 && (
+                  <span className="absolute top-0 right-0 inline-flex items-center justify-center px-1.5 py-0.5 text-xs font-bold leading-none text-white transform translate-x-1/2 -translate-y-1/2 bg-red-600 rounded-full">{unreadCount}</span>
+                )}
+              </div>
+
               <button className="btn-secondary" type="button" onClick={handleLogout}>
                 Logout
               </button>

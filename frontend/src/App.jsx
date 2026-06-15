@@ -33,6 +33,8 @@ import ManagerAppraisalsPage from './pages/ManagerAppraisalsPage';
 import ITAdminDeskPage from './pages/ITAdminDeskPage';
 import EmployeeServicesPage from './pages/EmployeeServicesPage';
 import ExitManagementPage from './pages/ExitManagementPage';
+import WorkforcePlanningPage from './pages/WorkforcePlanningPage';
+import AnalyticsPage from './pages/AnalyticsPage';
 
 export default function App() {
   return (
@@ -260,6 +262,22 @@ export default function App() {
           element={
             <ProtectedRoute roles={['manager', 'hr_admin']}>
               <ExitManagementPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/workforce-planning"
+          element={
+            <ProtectedRoute roles={['hr_admin', 'manager']}>
+              <WorkforcePlanningPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/analytics"
+          element={
+            <ProtectedRoute roles={['hr_admin', 'manager']}>
+              <AnalyticsPage />
             </ProtectedRoute>
           }
         />

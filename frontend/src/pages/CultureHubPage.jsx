@@ -35,7 +35,7 @@ export default function CultureHubPage() {
       setAnnouncements(annData);
       setSurveys(survData);
       setRecognitions(recData);
-      setEmployees(empData);
+      setEmployees(empData.items || []);
     } catch (err) {
       setError(getApiError(err, 'Failed to load culture hub data.'));
     } finally {
@@ -146,7 +146,7 @@ export default function CultureHubPage() {
                 <select className="input mt-1" required value={receiverId} onChange={e => setReceiverId(e.target.value)}>
                   <option value="">-- Select --</option>
                   {employees.map(emp => (
-                    <option key={emp.id} value={emp.id}>{emp.first_name} {emp.last_name} ({emp.employee_code})</option>
+                    <option key={emp.id} value={emp.id}>{emp.name} ({emp.employee_code})</option>
                   ))}
                 </select>
               </label>

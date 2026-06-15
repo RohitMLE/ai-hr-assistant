@@ -1,11 +1,13 @@
 import { useEffect, useState } from 'react';
 import { getMyAssets, getMyTickets, createTicket, getMyAcknowledgments, acknowledgePolicy, submitExitRequest, getMyExitRequests } from '../api/modules/phase7';
 import { getAllPolicies } from '../api/modules/compliance';
-import { getApiError } from '../api/client';
+import { getApiError, api } from '../api/client';
 import Alert from '../components/Alert';
 import Loading from '../components/Loading';
+import { useAuth } from '../auth/AuthContext';
 
 export default function EmployeeServicesPage() {
+  const { user } = useAuth();
   const [assets, setAssets] = useState([]);
   const [tickets, setTickets] = useState([]);
   const [policies, setPolicies] = useState([]);
@@ -67,6 +69,19 @@ export default function EmployeeServicesPage() {
       load();
     } catch (err) {
       setError(getApiError(err, 'Failed to acknowledge policy.'));
+    }
+  };
+
+  const handleUploadPdf = async (policyId, file) => {
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      await api.post(`/compliance/policies/${policyId}/upload-pdf`, formData, {
+        headers: { 'Content-Type': 'multipart/form-data' }
+      });
+      load();
+    } catch (err) {
+      setError(getApiError(err, 'Failed to upload PDF.'));
     }
   };
 
@@ -200,6 +215,14 @@ export default function EmployeeServicesPage() {
                     <span className="text-xs font-bold text-green-700 bg-green-100 px-2 py-1 rounded">✅ Acknowledged</span>
                   ) : (
                     <button className="btn-primary text-xs py-1" onClick={() => handleAcknowledge(policy.id)}>Acknowledge</button>
+                  )}
+                  {user?.role === 'hr_admin' && (
+                    <div className="mt-2 pt-2 border-t border-ink-100">
+                      <span className="block text-[10px] font-bold text-ink-500 uppercase mb-1">HR Admin: Upload PDF</span>
+                      <input type="file" accept=".pdf" className="text-xs text-ink-600 file:mr-2 file:py-1 file:px-2 file:border-0 file:text-xs file:font-bold file:bg-brand-50 file:text-brand-700 hover:file:bg-brand-100 rounded cursor-pointer" onChange={e => {
+                        if (e.target.files[0]) handleUploadPdf(policy.id, e.target.files[0]);
+                      }} />
+                    </div>
                   )}
                 </div>
               ))}

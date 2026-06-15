@@ -32,6 +32,8 @@ from app.models.helpdesk import HelpdeskTicket, TicketComment
 from app.models.hr_policy import HRPolicy
 from app.models.exit import ExitRequest, ExitClearanceTask, FinalSettlement
 from app.models.work_location import WorkLocation, EmploymentType
+from app.models.workforce_planning import WorkforcePlan, HeadcountBudget, SkillGapItem
+from app.models.notification import Notification
 
 __all__ = [
     "AuditLog",
@@ -88,4 +90,8 @@ __all__ = [
     "Role",
     "User",
     "WorkLocation",
+    "WorkforcePlan",
+    "HeadcountBudget",
+    "SkillGapItem",
+    "Notification",
 ]

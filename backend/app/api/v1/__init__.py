@@ -1,6 +1,6 @@
 from fastapi import APIRouter
 
-from app.api.v1 import agent, attendance, audit, auth, compliance, core_hr, employees, leave, onboarding, payroll, payroll_config, recruitment, expenses, performance, learning, engagement, rewards, assets, helpdesk, compliance_v2, exits
+from app.api.v1 import agent, attendance, audit, auth, compliance, core_hr, employees, leave, onboarding, payroll, payroll_config, recruitment, expenses, performance, learning, engagement, rewards, assets, helpdesk, compliance_v2, exits, workforce_planning, analytics, notifications
 
 router = APIRouter(prefix="/api/v1")
 
@@ -25,3 +25,6 @@ router.include_router(assets.router)
 router.include_router(helpdesk.router)
 router.include_router(compliance_v2.router)
 router.include_router(exits.router)
+router.include_router(workforce_planning.router)
+router.include_router(analytics.router)
+router.include_router(notifications.router)
